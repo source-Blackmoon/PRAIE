@@ -82,6 +82,21 @@ async def webhook_verificacion(request: Request):
     return {"status": "ok"}
 
 
+async def _procesar_mensaje(telefono: str, texto: str, historial: list):
+    """Procesa el mensaje y envía la respuesta en background."""
+    try:
+        respuesta = await generar_respuesta(texto, historial)
+        await guardar_mensaje(telefono, "user", texto)
+        await guardar_mensaje(telefono, "assistant", respuesta)
+        ok = await proveedor.enviar_mensaje(telefono, respuesta)
+        if ok:
+            logger.info(f"Respuesta enviada a {telefono}: {respuesta[:80]}...")
+        else:
+            logger.error(f"Fallo al enviar respuesta a {telefono}")
+    except Exception as e:
+        logger.error(f"Error procesando mensaje de {telefono}: {e}")
+
+
 @app.post("/webhook")
 async def webhook_handler(request: Request):
     if not AUTO_RESPONDER:
@@ -94,11 +109,9 @@ async def webhook_handler(request: Request):
                 continue
             logger.info(f"Mensaje de {msg.telefono}: {msg.texto}")
             historial = await obtener_historial(msg.telefono)
-            respuesta = await generar_respuesta(msg.texto, historial)
-            await guardar_mensaje(msg.telefono, "user", msg.texto)
-            await guardar_mensaje(msg.telefono, "assistant", respuesta)
-            await proveedor.enviar_mensaje(msg.telefono, respuesta)
-            logger.info(f"Respuesta a {msg.telefono}: {respuesta[:80]}...")
+            # Retornar 200 a Twilio/Whapi inmediatamente y procesar en background
+            # Evita timeout del proveedor cuando el tool_use toma >5s
+            asyncio.create_task(_procesar_mensaje(msg.telefono, msg.texto, historial))
         return {"status": "ok"}
     except Exception as e:
         logger.error(f"Error en webhook: {e}")
