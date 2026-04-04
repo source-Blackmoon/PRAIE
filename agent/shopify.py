@@ -1,9 +1,10 @@
 """
 Módulo de integración con Shopify Admin API — PRAIE
-Sincroniza carritos abandonados directamente desde Shopify.
+Sincroniza carritos abandonados y consulta el catálogo de productos.
 """
 
 import os
+import re
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -349,6 +350,107 @@ async def eliminar_webhook(webhook_id: int) -> bool:
             return r.status_code == 200
     except Exception:
         return False
+
+
+GRAPHQL_BUSCAR_PRODUCTOS = """
+query BuscarProductos($query: String!, $first: Int!) {
+  products(first: $first, query: $query, sortKey: RELEVANCE) {
+    edges {
+      node {
+        title
+        handle
+        descriptionHtml
+        variants(first: 30) {
+          edges {
+            node {
+              title
+              price
+              availableForSale
+            }
+          }
+        }
+        featuredImage {
+          url
+        }
+      }
+    }
+  }
+}
+"""
+
+
+def _strip_html(text: str) -> str:
+    return re.sub(r'<[^>]+>', ' ', text or '').strip()
+
+
+async def buscar_productos_shopify(query: str, limit: int = 2) -> list[dict]:
+    """
+    Busca productos activos en Shopify por término de búsqueda.
+    Retorna lista con título, precio, tallas disponibles, URL e imagen.
+    """
+    if not SHOPIFY_ACCESS_TOKEN or SHOPIFY_ACCESS_TOKEN.startswith("REEMPLAZAR"):
+        logger.warning("SHOPIFY_ACCESS_TOKEN no configurado — no se puede buscar productos")
+        return []
+
+    limit = max(1, min(limit, 5))
+    url = f"{_base_url()}/graphql.json"
+    payload = {
+        "query": GRAPHQL_BUSCAR_PRODUCTOS,
+        "variables": {"query": query, "first": limit},
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.post(url, json=payload, headers=_headers())
+            if r.status_code != 200:
+                logger.error(f"Shopify productos {r.status_code}: {r.text[:200]}")
+                return []
+
+            data = r.json()
+            if "errors" in data and not data.get("data"):
+                logger.error(f"Shopify GraphQL error: {data['errors']}")
+                return []
+
+            edges = data.get("data", {}).get("products", {}).get("edges", [])
+            resultado = []
+
+            for edge in edges:
+                p = edge["node"]
+                variantes = [e["node"] for e in p.get("variants", {}).get("edges", [])]
+
+                tallas = [
+                    v["title"] for v in variantes
+                    if v.get("availableForSale") and v.get("title") != "Default Title"
+                ]
+
+                precios = sorted(set(float(v["price"]) for v in variantes if v.get("price")))
+                if len(precios) == 1:
+                    precio_str = f"${precios[0]:,.0f} COP"
+                elif len(precios) > 1:
+                    precio_str = f"${precios[0]:,.0f} – ${precios[-1]:,.0f} COP"
+                else:
+                    precio_str = "Consultar"
+
+                imagen = (p.get("featuredImage") or {}).get("url", "")
+
+                resultado.append({
+                    "titulo": p.get("title", ""),
+                    "precio": precio_str,
+                    "tallas": tallas,
+                    "url": f"https://praie.co/products/{p.get('handle', '')}",
+                    "imagen": imagen,
+                    "descripcion": _strip_html(p.get("descriptionHtml", ""))[:200],
+                })
+
+            logger.info(f"Shopify productos encontrados: {len(resultado)} para query '{query}'")
+            return resultado
+
+    except httpx.TimeoutException:
+        logger.error("Timeout buscando productos en Shopify")
+        return []
+    except Exception as e:
+        logger.error(f"Error buscando productos: {e}")
+        return []
 
 
 async def verificar_credenciales() -> dict:
