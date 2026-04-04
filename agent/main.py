@@ -168,6 +168,14 @@ async def shopify_status():
     return await verificar_credenciales()
 
 
+@app.get("/api/shopify/test-productos")
+async def test_productos(q: str = "vestido de baño"):
+    """Prueba directa de búsqueda de productos en Shopify."""
+    from agent.shopify import buscar_productos_shopify
+    productos = await buscar_productos_shopify(q, limit=3)
+    return {"query": q, "total": len(productos), "productos": productos}
+
+
 @app.get("/api/shopify/webhooks")
 async def get_webhooks():
     """Lista los webhooks registrados en Shopify."""

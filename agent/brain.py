@@ -99,12 +99,13 @@ async def generar_respuesta(mensaje: str, historial: list[dict]) -> str:
                 tools=TOOLS,
             )
 
+            logger.info(f"Claude stop_reason={response.stop_reason} | tokens={response.usage.input_tokens}in/{response.usage.output_tokens}out")
+
             if response.stop_reason == "end_turn":
                 texto = next(
                     (b.text for b in response.content if hasattr(b, "text")),
                     obtener_mensaje_fallback(),
                 )
-                logger.info(f"Tokens: {response.usage.input_tokens} in / {response.usage.output_tokens} out")
                 return texto
 
             if response.stop_reason == "tool_use":
