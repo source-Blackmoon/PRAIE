@@ -1,0 +1,127 @@
+import os
+from datetime import datetime, timedelta
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy import String, Text, DateTime, select, Integer, Boolean
+from dotenv import load_dotenv
+
+load_dotenv()
+
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./agentkit.db")
+
+if DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+engine = create_async_engine(DATABASE_URL, echo=False)
+async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class Mensaje(Base):
+    __tablename__ = "mensajes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    telefono: Mapped[str] = mapped_column(String(50), index=True)
+    role: Mapped[str] = mapped_column(String(20))
+    content: Mapped[str] = mapped_column(Text)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class CheckoutAbandonado(Base):
+    __tablename__ = "checkouts_abandonados"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    checkout_id: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    telefono: Mapped[str] = mapped_column(String(50), index=True)
+    nombre: Mapped[str] = mapped_column(String(100), default="")
+    productos: Mapped[str] = mapped_column(Text, default="")
+    total: Mapped[str] = mapped_column(String(30), default="")
+    url_carrito: Mapped[str] = mapped_column(Text, default="")
+    mensaje_enviado: Mapped[bool] = mapped_column(Boolean, default=False)
+    completado: Mapped[bool] = mapped_column(Boolean, default=False)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+async def inicializar_db():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+
+async def guardar_mensaje(telefono: str, role: str, content: str):
+    async with async_session() as session:
+        session.add(Mensaje(telefono=telefono, role=role, content=content))
+        await session.commit()
+
+
+async def obtener_historial(telefono: str, limite: int = 20) -> list[dict]:
+    async with async_session() as session:
+        query = (
+            select(Mensaje)
+            .where(Mensaje.telefono == telefono)
+            .order_by(Mensaje.timestamp.desc())
+            .limit(limite)
+        )
+        result = await session.execute(query)
+        mensajes = list(reversed(result.scalars().all()))
+        return [{"role": m.role, "content": m.content} for m in mensajes]
+
+
+async def guardar_checkout(checkout_id: str, telefono: str, nombre: str,
+                           productos: str, total: str, url_carrito: str):
+    async with async_session() as session:
+        existente = await session.execute(
+            select(CheckoutAbandonado).where(CheckoutAbandonado.checkout_id == checkout_id)
+        )
+        if existente.scalar_one_or_none():
+            return
+        session.add(CheckoutAbandonado(
+            checkout_id=checkout_id, telefono=telefono, nombre=nombre,
+            productos=productos, total=total, url_carrito=url_carrito,
+        ))
+        await session.commit()
+
+
+async def obtener_checkouts_pendientes(minutos_espera: int = 60) -> list:
+    limite = datetime.utcnow() - timedelta(minutes=minutos_espera)
+    async with async_session() as session:
+        query = (
+            select(CheckoutAbandonado)
+            .where(CheckoutAbandonado.mensaje_enviado == False)
+            .where(CheckoutAbandonado.completado == False)
+            .where(CheckoutAbandonado.timestamp <= limite)
+        )
+        result = await session.execute(query)
+        return result.scalars().all()
+
+
+async def marcar_mensaje_enviado(checkout_id: str):
+    async with async_session() as session:
+        result = await session.execute(
+            select(CheckoutAbandonado).where(CheckoutAbandonado.checkout_id == checkout_id)
+        )
+        checkout = result.scalar_one_or_none()
+        if checkout:
+            checkout.mensaje_enviado = True
+            await session.commit()
+
+
+async def marcar_checkout_completado(checkout_id: str):
+    async with async_session() as session:
+        result = await session.execute(
+            select(CheckoutAbandonado).where(CheckoutAbandonado.checkout_id == checkout_id)
+        )
+        checkout = result.scalar_one_or_none()
+        if checkout:
+            checkout.completado = True
+            await session.commit()
+
+
+async def limpiar_historial(telefono: str):
+    async with async_session() as session:
+        result = await session.execute(select(Mensaje).where(Mensaje.telefono == telefono))
+        for m in result.scalars().all():
+            await session.delete(m)
+        await session.commit()

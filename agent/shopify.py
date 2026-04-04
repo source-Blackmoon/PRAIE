@@ -1,0 +1,371 @@
+"""
+Módulo de integración con Shopify Admin API — PRAIE
+Sincroniza carritos abandonados directamente desde Shopify.
+"""
+
+import os
+import logging
+from datetime import datetime, timedelta, timezone
+
+import httpx
+
+from agent.memory import guardar_checkout, marcar_checkout_completado
+
+logger = logging.getLogger("agentkit.shopify")
+
+SHOPIFY_STORE_URL = os.getenv("SHOPIFY_STORE_URL", "")
+SHOPIFY_ACCESS_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN", "")
+API_VERSION = "2024-10"
+
+
+def _headers() -> dict:
+    return {
+        "X-Shopify-Access-Token": SHOPIFY_ACCESS_TOKEN,
+        "Content-Type": "application/json",
+    }
+
+
+def _base_url() -> str:
+    store = SHOPIFY_STORE_URL.rstrip("/")
+    if not store.startswith("http"):
+        store = f"https://{store}"
+    return f"{store}/admin/api/{API_VERSION}"
+
+
+def _formatear_telefono(telefono: str) -> str:
+    """Normaliza a formato Colombia: 57XXXXXXXXXX."""
+    limpio = "".join(filter(str.isdigit, telefono))
+    if len(limpio) == 10 and limpio.startswith("3"):
+        limpio = "57" + limpio
+    return limpio
+
+
+def _formatear_total(total: str) -> str:
+    try:
+        return f"${float(total):,.0f} COP"
+    except Exception:
+        return total
+
+
+def _parsear_checkout(checkout: dict) -> dict | None:
+    """Extrae campos relevantes de un checkout de Shopify."""
+    # Teléfono — varios campos posibles
+    telefono = (
+        checkout.get("phone") or
+        checkout.get("billing_address", {}).get("phone") or
+        checkout.get("shipping_address", {}).get("phone") or
+        (checkout.get("customer") or {}).get("phone") or ""
+    )
+    if not telefono:
+        return None
+
+    telefono = _formatear_telefono(telefono)
+
+    nombre = (
+        checkout.get("customer", {}).get("first_name") or
+        checkout.get("billing_address", {}).get("first_name") or
+        "amiga"
+    )
+
+    items = checkout.get("line_items", [])
+    productos = ", ".join(
+        f"{it.get('title', 'producto')} (x{it.get('quantity', 1)})"
+        for it in items[:3]
+    ) or "tu vestido de baño"
+
+    total = _formatear_total(checkout.get("total_price", ""))
+
+    url_carrito = checkout.get("abandoned_checkout_url") or "https://praie.co/checkout"
+
+    checkout_id = str(checkout.get("id") or checkout.get("token", ""))
+
+    return {
+        "checkout_id": checkout_id,
+        "telefono": telefono,
+        "nombre": nombre,
+        "productos": productos,
+        "total": total,
+        "url_carrito": url_carrito,
+        "completado": checkout.get("completed_at") is not None,
+    }
+
+
+GRAPHQL_QUERY = """
+query ObtenerCarritosAbandonados($filtro: String!) {
+  abandonedCheckouts(first: 50, query: $filtro) {
+    edges {
+      node {
+        id
+        createdAt
+        completedAt
+        abandonedCheckoutUrl
+        totalPriceSet {
+          shopMoney { amount currencyCode }
+        }
+        customer {
+          firstName
+          phone
+        }
+        billingAddress {
+          firstName
+          phone
+        }
+        shippingAddress {
+          firstName
+          phone
+        }
+        lineItems(first: 5) {
+          edges {
+            node { title quantity }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+
+def _parsear_checkout_graphql(node: dict) -> dict | None:
+    """Extrae campos relevantes de un nodo GraphQL de checkout."""
+    telefono = (
+        (node.get("customer") or {}).get("phone") or
+        (node.get("billingAddress") or {}).get("phone") or
+        (node.get("shippingAddress") or {}).get("phone") or ""
+    )
+    if not telefono:
+        return None
+
+    telefono = _formatear_telefono(telefono)
+
+    nombre = (
+        (node.get("customer") or {}).get("firstName") or
+        (node.get("billingAddress") or {}).get("firstName") or
+        (node.get("shippingAddress") or {}).get("firstName") or
+        "amiga"
+    )
+
+    items = [e["node"] for e in node.get("lineItems", {}).get("edges", [])]
+    productos = ", ".join(
+        f"{it.get('title', 'producto')} (x{it.get('quantity', 1)})"
+        for it in items[:3]
+    ) or "tu vestido de baño"
+
+    precio = node.get("totalPriceSet", {}).get("shopMoney", {})
+    total = _formatear_total(precio.get("amount", ""))
+
+    checkout_id = node.get("id", "").split("/")[-1]
+
+    return {
+        "checkout_id": checkout_id,
+        "telefono": telefono,
+        "nombre": nombre,
+        "productos": productos,
+        "total": total,
+        "url_carrito": node.get("abandonedCheckoutUrl") or "https://praie.co/checkout",
+        "completado": node.get("completedAt") is not None,
+    }
+
+
+async def obtener_checkouts_shopify(horas_atras: int = 48) -> list[dict]:
+    """
+    Consulta la API GraphQL de Shopify y retorna checkouts abandonados.
+    Solo retorna los que tienen teléfono y NO están completados.
+    """
+    if not SHOPIFY_ACCESS_TOKEN or SHOPIFY_ACCESS_TOKEN.startswith("REEMPLAZAR"):
+        logger.warning("SHOPIFY_ACCESS_TOKEN no configurado — saltando sincronización")
+        return []
+
+    desde = (datetime.now(timezone.utc) - timedelta(hours=horas_atras)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+
+    url = f"{_base_url()}/graphql.json"
+    payload = {
+        "query": GRAPHQL_QUERY,
+        "variables": {"filtro": f"created_at:>{desde}"},
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            r = await client.post(url, json=payload, headers=_headers())
+            if r.status_code == 401:
+                logger.error("Shopify 401 — verifica SHOPIFY_ACCESS_TOKEN")
+                return []
+            if r.status_code != 200:
+                logger.error(f"Shopify error {r.status_code}: {r.text[:200]}")
+                return []
+
+            data = r.json()
+            if "errors" in data:
+                for e in data["errors"]:
+                    logger.warning(f"Shopify GraphQL warning: {e.get('message')}")
+                # Solo abortar si no hay datos en absoluto
+                if not data.get("data"):
+                    return []
+
+            edges = (
+                data.get("data", {})
+                    .get("abandonedCheckouts", {})
+                    .get("edges", [])
+            )
+            logger.info(f"Shopify retornó {len(edges)} checkouts")
+
+            resultado = []
+            for edge in edges:
+                parsed = _parsear_checkout_graphql(edge["node"])
+                if parsed:
+                    resultado.append(parsed)
+
+            logger.info(f"Checkouts con teléfono: {len(resultado)}")
+            return resultado
+
+    except httpx.TimeoutException:
+        logger.error("Timeout al conectar con Shopify")
+        return []
+    except Exception as e:
+        logger.error(f"Error inesperado Shopify: {e}")
+        return []
+
+
+async def sincronizar_checkouts() -> dict:
+    """
+    Sincroniza carritos abandonados de Shopify a la base de datos local.
+    Retorna resumen: {nuevos, completados, sin_telefono, errores}
+    """
+    checkouts = await obtener_checkouts_shopify(horas_atras=48)
+
+    nuevos = 0
+    completados = 0
+
+    for c in checkouts:
+        if c["completado"]:
+            await marcar_checkout_completado(c["checkout_id"])
+            completados += 1
+        else:
+            try:
+                await guardar_checkout(
+                    checkout_id=c["checkout_id"],
+                    telefono=c["telefono"],
+                    nombre=c["nombre"],
+                    productos=c["productos"],
+                    total=c["total"],
+                    url_carrito=c["url_carrito"],
+                )
+                nuevos += 1
+            except Exception as e:
+                logger.error(f"Error guardando checkout {c['checkout_id']}: {e}")
+
+    resumen = {"nuevos": nuevos, "completados_marcados": completados, "total": len(checkouts)}
+    logger.info(f"Sincronización Shopify: {resumen}")
+    return resumen
+
+
+# ── Webhooks ──────────────────────────────────────────────
+
+# Tópicos válidos en Shopify API 2022-07+
+# checkouts/create y checkouts/update fueron eliminados — se usa polling via GraphQL
+WEBHOOK_TOPICS = [
+    {"topic": "orders/paid",    "path": "/shopify/orden"},
+    {"topic": "orders/create",  "path": "/shopify/orden"},
+]
+
+
+async def listar_webhooks() -> list[dict]:
+    """Retorna los webhooks actualmente registrados en Shopify."""
+    if not SHOPIFY_ACCESS_TOKEN or SHOPIFY_ACCESS_TOKEN.startswith("REEMPLAZAR"):
+        return []
+    url = f"{_base_url()}/webhooks.json"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(url, headers=_headers())
+            if r.status_code == 200:
+                return r.json().get("webhooks", [])
+            logger.error(f"Shopify listar webhooks {r.status_code}: {r.text[:200]}")
+            return []
+    except Exception as e:
+        logger.error(f"Error listando webhooks: {e}")
+        return []
+
+
+async def registrar_webhooks(base_url: str) -> dict:
+    """
+    Registra los webhooks necesarios en Shopify apuntando a base_url.
+    Omite los que ya existen. Retorna {registrados, existentes, errores}.
+    """
+    base_url = base_url.rstrip("/")
+    existentes = await listar_webhooks()
+    topics_existentes = {w["topic"] for w in existentes}
+
+    registrados = []
+    errores = []
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        for wh in WEBHOOK_TOPICS:
+            topic = wh["topic"]
+            endpoint = f"{base_url}{wh['path']}"
+
+            if topic in topics_existentes:
+                logger.info(f"Webhook ya existe: {topic}")
+                continue
+
+            payload = {
+                "webhook": {
+                    "topic": topic,
+                    "address": endpoint,
+                    "format": "json",
+                }
+            }
+            try:
+                r = await client.post(
+                    f"{_base_url()}/webhooks.json",
+                    json=payload,
+                    headers=_headers(),
+                )
+                if r.status_code in (200, 201):
+                    registrados.append(topic)
+                    logger.info(f"Webhook registrado: {topic} → {endpoint}")
+                else:
+                    errores.append(f"{topic}: HTTP {r.status_code} — {r.text[:100]}")
+                    logger.error(f"Error registrando {topic}: {r.status_code}")
+            except Exception as e:
+                errores.append(f"{topic}: {e}")
+
+    return {
+        "registrados": registrados,
+        "ya_existian": [t for t in topics_existentes if t in {w["topic"] for w in WEBHOOK_TOPICS}],
+        "errores": errores,
+    }
+
+
+async def eliminar_webhook(webhook_id: int) -> bool:
+    """Elimina un webhook por ID."""
+    url = f"{_base_url()}/webhooks/{webhook_id}.json"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.delete(url, headers=_headers())
+            return r.status_code == 200
+    except Exception:
+        return False
+
+
+async def verificar_credenciales() -> dict:
+    """Verifica que el token de Shopify sea válido consultando la tienda."""
+    if not SHOPIFY_ACCESS_TOKEN or SHOPIFY_ACCESS_TOKEN.startswith("REEMPLAZAR"):
+        return {"ok": False, "error": "Token no configurado"}
+
+    url = f"{_base_url()}/shop.json"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(url, headers=_headers())
+            if r.status_code == 200:
+                shop = r.json().get("shop", {})
+                return {
+                    "ok": True,
+                    "tienda": shop.get("name", ""),
+                    "dominio": shop.get("domain", ""),
+                    "plan": shop.get("plan_name", ""),
+                }
+            return {"ok": False, "error": f"HTTP {r.status_code}", "detalle": r.text[:200]}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}

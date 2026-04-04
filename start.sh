@@ -1,79 +1,81 @@
 #!/bin/bash
-# AgentKit — Script de inicio
-# El usuario ejecuta: bash start.sh
+# start.sh — Levanta el backend y el frontend de PRAIE
 
-set -e
+BACKEND_PORT=8001
+FRONTEND_PORT=4001
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-echo ""
-echo "==========================================================="
-echo "   AgentKit — WhatsApp AI Agent Builder"
-echo "==========================================================="
-echo ""
-echo "  Preparando tu entorno para construir tu agente de IA..."
-echo ""
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m'
 
-# ── Verificar Python ──────────────────────────────────────────
-echo "  [1/4] Verificando Python..."
-if ! command -v python3 &> /dev/null; then
-    echo ""
-    echo "  ERROR: Python 3 no encontrado."
-    echo "  Descargalo en: https://python.org/downloads"
-    echo ""
-    exit 1
+cleanup() {
+  echo -e "\n${YELLOW}Deteniendo servicios...${NC}"
+  kill "$BACKEND_PID" "$FRONTEND_PID" 2>/dev/null
+  echo -e "${GREEN}Listo.${NC}"
+  exit 0
+}
+trap cleanup SIGINT SIGTERM
+
+# ── Backend ───────────────────────────────────────────────
+echo -e "${GREEN}▶ Iniciando backend (puerto $BACKEND_PORT)...${NC}"
+cd "$SCRIPT_DIR"
+
+if [ ! -d ".venv" ]; then
+  echo -e "${RED}Error: no se encontró .venv en $SCRIPT_DIR${NC}"
+  exit 1
 fi
 
-PYTHON_MAJOR=$(python3 -c 'import sys; print(sys.version_info.major)')
-PYTHON_MINOR=$(python3 -c 'import sys; print(sys.version_info.minor)')
-if [ "$PYTHON_MAJOR" -lt 3 ] || ([ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -lt 11 ]); then
-    echo ""
-    echo "  ERROR: Necesitas Python 3.11 o superior."
-    echo "  Version actual: $(python3 --version)"
-    echo "  Descarga la ultima version en: https://python.org/downloads"
-    echo ""
-    exit 1
+.venv/bin/uvicorn agent.main:app --port "$BACKEND_PORT" --reload \
+  > /tmp/praie-backend.log 2>&1 &
+BACKEND_PID=$!
+
+echo -n "  Esperando backend"
+for i in $(seq 1 15); do
+  sleep 1
+  if .venv/bin/python -c "import urllib.request; urllib.request.urlopen('http://localhost:$BACKEND_PORT/')" 2>/dev/null; then
+    echo -e " ${GREEN}✓${NC}"
+    break
+  fi
+  echo -n "."
+  if [ "$i" -eq 15 ]; then
+    echo -e " ${RED}✗ timeout — revisa /tmp/praie-backend.log${NC}"
+    cleanup
+  fi
+done
+
+# ── Frontend ──────────────────────────────────────────────
+echo -e "${GREEN}▶ Iniciando frontend (puerto $FRONTEND_PORT)...${NC}"
+cd "$SCRIPT_DIR/frontend"
+
+if [ ! -d "node_modules" ]; then
+  echo "  Instalando dependencias npm..."
+  npm install --silent
 fi
-echo "  OK — $(python3 --version)"
 
-# ── Verificar Claude Code ────────────────────────────────────
-echo "  [2/4] Verificando Claude Code..."
-if ! command -v claude &> /dev/null; then
-    echo ""
-    echo "  Claude Code no esta instalado."
-    echo ""
-    echo "  Para instalarlo:"
-    echo "    npm install -g @anthropic-ai/claude-code"
-    echo ""
-    echo "  Si no tienes npm/Node.js:"
-    echo "    https://nodejs.org (descarga LTS)"
-    echo ""
-    echo "  Despues de instalar, ejecuta 'claude' una vez para autenticarte"
-    echo "  y luego vuelve a correr: bash start.sh"
-    echo ""
-    exit 1
-fi
-echo "  OK — Claude Code instalado"
+npm run dev > /tmp/praie-frontend.log 2>&1 &
+FRONTEND_PID=$!
 
-# ── Crear carpetas base ──────────────────────────────────────
-echo "  [3/4] Preparando carpetas..."
-mkdir -p knowledge
-echo "  OK — Estructura lista"
+echo -n "  Esperando frontend"
+for i in $(seq 1 20); do
+  sleep 1
+  if grep -q "Ready" /tmp/praie-frontend.log 2>/dev/null; then
+    echo -e " ${GREEN}✓${NC}"
+    break
+  fi
+  echo -n "."
+done
+echo ""
 
-# ── Listo ─────────────────────────────────────────────────────
-echo "  [4/4] Todo verificado"
+# ── Resumen ───────────────────────────────────────────────
+echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${GREEN}  PRAIE — Panel Laura${NC}"
+echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "  Dashboard:  ${YELLOW}http://localhost:$FRONTEND_PORT${NC}"
+echo -e "  Backend:    ${YELLOW}http://localhost:$BACKEND_PORT${NC}"
+echo -e "  Logs:       tail -f /tmp/praie-backend.log"
+echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "  Ctrl+C para detener todo\n"
 
-echo ""
-echo "==========================================================="
-echo ""
-echo "  Todo listo. Ahora abre Claude Code:"
-echo ""
-echo "    claude"
-echo ""
-echo "  Y escribe:"
-echo ""
-echo "    /build-agent"
-echo ""
-echo "  Claude Code te guiara paso a paso para construir"
-echo "  tu agente de WhatsApp personalizado con IA."
-echo ""
-echo "==========================================================="
-echo ""
+wait "$BACKEND_PID" "$FRONTEND_PID"
