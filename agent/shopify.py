@@ -92,7 +92,7 @@ def _parsear_checkout(checkout: dict) -> dict | None:
 
 GRAPHQL_QUERY = """
 query ObtenerCarritosAbandonados($filtro: String!) {
-  abandonedCheckouts(first: 50, query: $filtro) {
+  abandonedCheckouts(first: 250, query: $filtro) {
     edges {
       node {
         id
@@ -167,24 +167,26 @@ def _parsear_checkout_graphql(node: dict) -> dict | None:
     }
 
 
-async def obtener_checkouts_shopify(horas_atras: int = 48) -> list[dict]:
+async def obtener_checkouts_shopify(horas_atras: int = 48, horas_minimo: int = 2) -> list[dict]:
     """
     Consulta la API GraphQL de Shopify y retorna checkouts abandonados.
-    Solo retorna los que tienen teléfono y NO están completados.
+    Solo retorna los que tienen teléfono, NO están completados, y tienen
+    al menos `horas_minimo` horas de abandono.
     """
     if not SHOPIFY_ACCESS_TOKEN or SHOPIFY_ACCESS_TOKEN.startswith("REEMPLAZAR"):
         logger.warning("SHOPIFY_ACCESS_TOKEN no configurado — saltando sincronización")
         return []
 
-    desde = (datetime.now(timezone.utc) - timedelta(hours=horas_atras)).strftime(
-        "%Y-%m-%dT%H:%M:%SZ"
-    )
+    ahora = datetime.now(timezone.utc)
+    desde = (ahora - timedelta(hours=horas_atras)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    hasta = (ahora - timedelta(hours=horas_minimo)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     url = f"{_base_url()}/graphql.json"
     payload = {
         "query": GRAPHQL_QUERY,
-        "variables": {"filtro": f"created_at:>{desde}"},
+        "variables": {"filtro": f"created_at:>{desde} AND created_at:<{hasta}"},
     }
+    logger.info(f"Sincronizando carritos abandonados entre {horas_minimo}h y {horas_atras}h atrás")
 
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
@@ -233,7 +235,7 @@ async def sincronizar_checkouts() -> dict:
     Sincroniza carritos abandonados de Shopify a la base de datos local.
     Retorna resumen: {nuevos, completados, sin_telefono, errores}
     """
-    checkouts = await obtener_checkouts_shopify(horas_atras=48)
+    checkouts = await obtener_checkouts_shopify(horas_atras=48, horas_minimo=2)
 
     nuevos = 0
     completados = 0
