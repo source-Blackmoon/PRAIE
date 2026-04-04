@@ -50,9 +50,15 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Agente WhatsApp PRAIE — Laura", version="1.0.0", lifespan=lifespan)
 
+CORS_ORIGINS = [
+    "http://localhost:4001",
+    "http://localhost:4000",
+    "https://praie-front-production.up.railway.app",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:4001", "http://localhost:4000"],
+    allow_origins=CORS_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
