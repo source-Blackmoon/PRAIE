@@ -169,11 +169,29 @@ async def shopify_status():
 
 
 @app.get("/api/shopify/test-productos")
-async def test_productos(q: str = "vestido de baño"):
-    """Prueba directa de búsqueda de productos en Shopify."""
-    from agent.shopify import buscar_productos_shopify
-    productos = await buscar_productos_shopify(q, limit=3)
-    return {"query": q, "total": len(productos), "productos": productos}
+async def test_productos(q: str = ""):
+    """Prueba directa de búsqueda de productos en Shopify. Sin q= trae todos."""
+    from agent.shopify import buscar_productos_shopify, _base_url, _headers
+    import httpx
+
+    # Consulta raw para ver la respuesta completa de Shopify
+    gql = """
+    query($query: String!, $first: Int!) {
+      products(first: $first, query: $query) {
+        edges { node { title handle status } }
+      }
+    }
+    """
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        r = await client.post(
+            f"{_base_url()}/graphql.json",
+            json={"query": gql, "variables": {"query": q, "first": 10}},
+            headers=_headers(),
+        )
+        raw = r.json()
+
+    productos = await buscar_productos_shopify(q, limit=5) if q else []
+    return {"query": q, "status_code": r.status_code, "raw": raw, "productos": productos}
 
 
 @app.get("/api/shopify/webhooks")
