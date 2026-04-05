@@ -359,6 +359,7 @@ query BuscarProductos($query: String!, $first: Int!) {
       node {
         title
         handle
+        status
         descriptionHtml
         variants(first: 30) {
           edges {
@@ -366,6 +367,7 @@ query BuscarProductos($query: String!, $first: Int!) {
               title
               price
               availableForSale
+              inventoryQuantity
             }
           }
         }
@@ -393,10 +395,12 @@ async def buscar_productos_shopify(query: str, limit: int = 2) -> list[dict]:
         return []
 
     limit = max(1, min(limit, 5))
+    # Siempre filtrar productos activos desde Shopify
+    query_completa = f"{query} status:active".strip() if query else "status:active"
     url = f"{_base_url()}/graphql.json"
     payload = {
         "query": GRAPHQL_BUSCAR_PRODUCTOS,
-        "variables": {"query": query, "first": limit},
+        "variables": {"query": query_completa, "first": limit + 5},  # pedir extra para filtrar sin inventario
     }
 
     try:
@@ -417,12 +421,25 @@ async def buscar_productos_shopify(query: str, limit: int = 2) -> list[dict]:
 
             for edge in edges:
                 p = edge["node"]
+
+                # Ignorar productos no activos (doble verificación)
+                if p.get("status", "ACTIVE") != "ACTIVE":
+                    continue
+
                 variantes = [e["node"] for e in p.get("variants", {}).get("edges", [])]
 
+                # Tallas con stock disponible (availableForSale=True e inventoryQuantity>0)
                 tallas = [
                     v["title"] for v in variantes
-                    if v.get("availableForSale") and v.get("title") != "Default Title"
+                    if v.get("availableForSale")
+                    and v.get("inventoryQuantity", 1) > 0
+                    and v.get("title") != "Default Title"
                 ]
+
+                # Si ninguna talla tiene stock, omitir el producto
+                if not tallas and any(v.get("title") != "Default Title" for v in variantes):
+                    logger.info(f"Producto sin stock omitido: {p.get('title')}")
+                    continue
 
                 precios = sorted(set(float(v["price"]) for v in variantes if v.get("price")))
                 if len(precios) == 1:
@@ -431,6 +448,9 @@ async def buscar_productos_shopify(query: str, limit: int = 2) -> list[dict]:
                     precio_str = f"${precios[0]:,.0f} – ${precios[-1]:,.0f} COP"
                 else:
                     precio_str = "Consultar"
+
+                if len(resultado) >= limit:
+                    break
 
                 imagen = (p.get("featuredImage") or {}).get("url", "")
 
