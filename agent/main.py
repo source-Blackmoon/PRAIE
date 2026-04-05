@@ -118,6 +118,52 @@ async def webhook_handler(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ── Shopify OAuth ─────────────────────────────────────────
+SHOPIFY_CLIENT_ID = os.getenv("SHOPIFY_CLIENT_ID", "")
+SHOPIFY_CLIENT_SECRET = os.getenv("SHOPIFY_CLIENT_SECRET", "")
+SHOPIFY_OAUTH_SCOPES = "read_products,read_orders,write_webhooks,read_webhooks"
+SHOPIFY_REDIRECT_URI = "https://praie-production.up.railway.app/shopify/oauth/callback"
+
+
+@app.get("/shopify/oauth/install")
+async def shopify_oauth_install(shop: str = "f0315f.myshopify.com"):
+    """Inicia el flujo OAuth — abre esto en el browser para obtener un token nuevo."""
+    from fastapi.responses import RedirectResponse
+    url = (
+        f"https://{shop}/admin/oauth/authorize"
+        f"?client_id={SHOPIFY_CLIENT_ID}"
+        f"&scope={SHOPIFY_OAUTH_SCOPES}"
+        f"&redirect_uri={SHOPIFY_REDIRECT_URI}"
+        f"&state=praie-oauth"
+    )
+    return RedirectResponse(url)
+
+
+@app.get("/shopify/oauth/callback")
+async def shopify_oauth_callback(code: str, shop: str, state: str = ""):
+    """Recibe el código OAuth y lo intercambia por un access token."""
+    import httpx
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        r = await client.post(
+            f"https://{shop}/admin/oauth/access_token",
+            json={
+                "client_id": SHOPIFY_CLIENT_ID,
+                "client_secret": SHOPIFY_CLIENT_SECRET,
+                "code": code,
+            },
+        )
+    data = r.json()
+    token = data.get("access_token", "")
+    scope = data.get("scope", "")
+    logger.info(f"OAuth Shopify — nuevo token obtenido, scopes: {scope}")
+    return {
+        "instruccion": "Copia este token en Railway como SHOPIFY_ACCESS_TOKEN",
+        "access_token": token,
+        "scope": scope,
+        "shop": shop,
+    }
+
+
 # ── Shopify webhooks ───────────────────────────────────────
 @app.post("/shopify/checkout")
 async def shopify_checkout(request: Request):
