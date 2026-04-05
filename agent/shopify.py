@@ -41,9 +41,14 @@ def _formatear_telefono(telefono: str) -> str:
     return limpio
 
 
+def _formatear_precio_cop(valor: float) -> str:
+    """Formatea un precio en pesos colombianos: $164.900 COP"""
+    return f"${valor:,.0f}".replace(",", ".") + " COP"
+
+
 def _formatear_total(total: str) -> str:
     try:
-        return f"${float(total):,.0f} COP"
+        return _formatear_precio_cop(float(total))
     except Exception:
         return total
 
@@ -443,9 +448,9 @@ async def buscar_productos_shopify(query: str, limit: int = 2) -> list[dict]:
 
                 precios = sorted(set(float(v["price"]) for v in variantes if v.get("price")))
                 if len(precios) == 1:
-                    precio_str = f"${precios[0]:,.0f} COP"
+                    precio_str = _formatear_precio_cop(precios[0])
                 elif len(precios) > 1:
-                    precio_str = f"${precios[0]:,.0f} – ${precios[-1]:,.0f} COP"
+                    precio_str = f"{_formatear_precio_cop(precios[0])} – {_formatear_precio_cop(precios[-1])}"
                 else:
                     precio_str = "Consultar"
 
