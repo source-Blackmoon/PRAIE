@@ -1,6 +1,7 @@
 import os
 import yaml
 import logging
+from pathlib import Path
 from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
 
@@ -49,8 +50,28 @@ def _cargar_prompts() -> dict:
         return {}
 
 
+def _cargar_knowledge() -> str:
+    """Carga todos los archivos .txt de /knowledge y los concatena."""
+    knowledge_dir = Path("knowledge")
+    if not knowledge_dir.exists():
+        return ""
+    secciones = []
+    for archivo in sorted(knowledge_dir.glob("*.txt")):
+        try:
+            contenido = archivo.read_text(encoding="utf-8").strip()
+            if contenido:
+                secciones.append(f"## {archivo.stem.replace('_', ' ').title()}\n{contenido}")
+        except Exception:
+            pass
+    return "\n\n".join(secciones)
+
+
 def cargar_system_prompt() -> str:
-    return _cargar_prompts().get("system_prompt", "Eres Laura, asistente de PRAIE. Responde en español.")
+    base = _cargar_prompts().get("system_prompt", "Eres Laura, asistente de PRAIE. Responde en español.")
+    knowledge = _cargar_knowledge()
+    if knowledge:
+        return f"{base}\n\n# INFORMACIÓN ADICIONAL DEL NEGOCIO\n{knowledge}"
+    return base
 
 
 def obtener_mensaje_error() -> str:
