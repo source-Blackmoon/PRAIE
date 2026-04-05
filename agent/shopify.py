@@ -354,7 +354,7 @@ async def eliminar_webhook(webhook_id: int) -> bool:
 
 GRAPHQL_BUSCAR_PRODUCTOS = """
 query BuscarProductos($query: String!, $first: Int!) {
-  products(first: $first, query: $query, sortKey: RELEVANCE) {
+  products(first: $first, query: $query) {
     edges {
       node {
         title
