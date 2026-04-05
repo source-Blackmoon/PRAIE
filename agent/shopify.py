@@ -407,6 +407,7 @@ async def buscar_productos_shopify(query: str, limit: int = 2) -> list[dict]:
                 return []
 
             data = r.json()
+            logger.info(f"Shopify productos raw: {str(data)[:500]}")
             if "errors" in data and not data.get("data"):
                 logger.error(f"Shopify GraphQL error: {data['errors']}")
                 return []
