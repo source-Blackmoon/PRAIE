@@ -5,7 +5,7 @@ from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from dotenv import load_dotenv
@@ -31,6 +31,17 @@ load_dotenv()
 
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 AUTO_RESPONDER = os.getenv("AUTO_RESPONDER", "true").lower() == "true"
+API_KEY = os.getenv("API_KEY", "")
+
+
+def verificar_api_key(x_api_key: str = Header(default="")):
+    """Protege los endpoints de administración con una API key."""
+    if not API_KEY:
+        if ENVIRONMENT == "production":
+            raise HTTPException(status_code=500, detail="API_KEY no configurada en producción")
+        return  # En desarrollo se acepta sin key
+    if x_api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="API key inválida")
 
 logging.basicConfig(level=logging.DEBUG if ENVIRONMENT == "development" else logging.INFO)
 logger = logging.getLogger("agentkit")
@@ -45,6 +56,22 @@ async def lifespan(app: FastAPI):
     logger.info(f"AgentKit listo — proveedor: {proveedor.__class__.__name__}")
     logger.info(f"Auto-respuesta WhatsApp: {'ACTIVA' if AUTO_RESPONDER else 'DESACTIVADA'}")
     logger.info("Scheduler de carritos abandonados activo")
+    # Advertencias de configuración en producción
+    if ENVIRONMENT == "production":
+        db_url = os.getenv("DATABASE_URL", "")
+        if "sqlite" in db_url or not db_url:
+            logger.warning(
+                "ADVERTENCIA: Usando SQLite en producción. "
+                "Los datos se perderán al redesplegar. "
+                "Configura DATABASE_URL con PostgreSQL en Railway."
+            )
+        if not API_KEY:
+            logger.warning(
+                "ADVERTENCIA: API_KEY no configurada. "
+                "Los endpoints de administración están desprotegidos."
+            )
+        if not os.getenv("ANTHROPIC_API_KEY"):
+            logger.error("ANTHROPIC_API_KEY no configurada — el agente no puede responder.")
     yield
 
 
@@ -177,7 +204,7 @@ async def shopify_orden(request: Request):
 
 # ── API de carritos para el dashboard ─────────────────────
 @app.get("/api/carritos")
-async def listar_carritos():
+async def listar_carritos(_: None = Depends(verificar_api_key)):
     """Devuelve todos los carritos para el dashboard."""
     async with async_session() as session:
         result = await session.execute(
@@ -202,20 +229,20 @@ async def listar_carritos():
 
 
 @app.post("/api/shopify/sync")
-async def sync_shopify():
+async def sync_shopify(_: None = Depends(verificar_api_key)):
     """Sincroniza carritos abandonados directamente desde Shopify Admin API."""
     resumen = await sincronizar_checkouts()
     return {"status": "ok", **resumen}
 
 
 @app.get("/api/shopify/status")
-async def shopify_status():
+async def shopify_status(_: None = Depends(verificar_api_key)):
     """Verifica que las credenciales de Shopify sean válidas."""
     return await verificar_credenciales()
 
 
 @app.get("/api/shopify/test-productos")
-async def test_productos(q: str = ""):
+async def test_productos(q: str = "", _: None = Depends(verificar_api_key)):
     """Prueba búsqueda de productos en Shopify. Sin q= trae los primeros 5."""
     from agent.shopify import buscar_productos_shopify
     productos = await buscar_productos_shopify(q, limit=5)
@@ -223,14 +250,14 @@ async def test_productos(q: str = ""):
 
 
 @app.get("/api/shopify/webhooks")
-async def get_webhooks():
+async def get_webhooks(_: None = Depends(verificar_api_key)):
     """Lista los webhooks registrados en Shopify."""
     webhooks = await listar_webhooks()
     return {"webhooks": webhooks}
 
 
 @app.post("/api/shopify/webhooks/registrar")
-async def post_registrar_webhooks(request: Request):
+async def post_registrar_webhooks(request: Request, _: None = Depends(verificar_api_key)):
     """Registra los webhooks necesarios apuntando a base_url."""
     body = await request.json()
     base_url = body.get("base_url", "").strip()
@@ -241,7 +268,7 @@ async def post_registrar_webhooks(request: Request):
 
 
 @app.delete("/api/shopify/webhooks/{webhook_id}")
-async def delete_webhook(webhook_id: int):
+async def delete_webhook(webhook_id: int, _: None = Depends(verificar_api_key)):
     """Elimina un webhook por ID."""
     ok = await eliminar_webhook(webhook_id)
     if not ok:
@@ -250,7 +277,7 @@ async def delete_webhook(webhook_id: int):
 
 
 @app.post("/api/carritos/{checkout_id}/enviar")
-async def enviar_carrito_manual(checkout_id: str):
+async def enviar_carrito_manual(checkout_id: str, _: None = Depends(verificar_api_key)):
     """Envía el mensaje de recuperación manualmente desde el dashboard."""
     async with async_session() as session:
         result = await session.execute(
@@ -287,7 +314,7 @@ SEÑALES_PROBLEMA = [
 
 
 @app.get("/api/metricas")
-async def get_metricas(dias: int = 7):
+async def get_metricas(dias: int = 7, _: None = Depends(verificar_api_key)):
     """Métricas del dashboard: KPIs, mensajes por día, alertas y conversión de carritos."""
     limite = datetime.utcnow() - timedelta(days=dias)
     async with async_session() as session:
@@ -353,7 +380,7 @@ async def get_metricas(dias: int = 7):
 
 
 @app.get("/api/conversaciones")
-async def get_conversaciones(dias: int = 7):
+async def get_conversaciones(dias: int = 7, _: None = Depends(verificar_api_key)):
     """Lista de conversaciones con preview para el panel izquierdo."""
     limite = datetime.utcnow() - timedelta(days=dias)
     async with async_session() as session:
@@ -379,7 +406,7 @@ async def get_conversaciones(dias: int = 7):
 
 
 @app.get("/api/conversaciones/{telefono}")
-async def get_mensajes_conversacion(telefono: str):
+async def get_mensajes_conversacion(telefono: str, _: None = Depends(verificar_api_key)):
     """Todos los mensajes de una conversación específica."""
     async with async_session() as session:
         result = await session.execute(
@@ -394,7 +421,7 @@ async def get_mensajes_conversacion(telefono: str):
 
 
 @app.get("/api/knowledge")
-async def list_knowledge():
+async def list_knowledge(_: None = Depends(verificar_api_key)):
     """Lista archivos del knowledge base con su contenido."""
     knowledge_dir = Path("knowledge")
     files = []
@@ -413,7 +440,7 @@ async def list_knowledge():
 
 
 @app.put("/api/knowledge/{filename}")
-async def update_knowledge(filename: str, request: Request):
+async def update_knowledge(filename: str, request: Request, _: None = Depends(verificar_api_key)):
     """Actualiza el contenido de un archivo del knowledge base."""
     body = await request.json()
     content = body.get("content", "")

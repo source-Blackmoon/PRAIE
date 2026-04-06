@@ -29,6 +29,8 @@ SHOPIFY_SECRET = os.getenv("SHOPIFY_WEBHOOK_SECRET", "")
 # ── Verificación HMAC de Shopify ───────────────────────────
 def verificar_shopify_hmac(body: bytes, hmac_header: str) -> bool:
     if not SHOPIFY_SECRET:
+        if os.getenv("ENVIRONMENT", "development") == "production":
+            logger.warning("SHOPIFY_WEBHOOK_SECRET no configurado — verificación HMAC desactivada en producción")
         return True  # Sin secret configurado → aceptar en desarrollo
     digest = hmac.new(
         SHOPIFY_SECRET.encode("utf-8"), body, hashlib.sha256
@@ -139,6 +141,10 @@ async def recibir_checkout(request: Request):
 async def recibir_orden_completada(request: Request):
     """Endpoint POST /shopify/orden — marca checkout como completado."""
     body = await request.body()
+    hmac_header = request.headers.get("X-Shopify-Hmac-Sha256", "")
+    environment = os.getenv("ENVIRONMENT", "development")
+    if SHOPIFY_SECRET and environment == "production" and not verificar_shopify_hmac(body, hmac_header):
+        raise HTTPException(status_code=401, detail="HMAC inválido")
     payload = __import__("json").loads(body)
     checkout_token = (
         payload.get("checkout_token") or

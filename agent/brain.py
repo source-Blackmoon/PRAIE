@@ -37,7 +37,34 @@ TOOLS = [
             },
             "required": ["query"],
         },
-    }
+    },
+    {
+        "name": "escalate_to_human",
+        "description": (
+            "Transfiere la conversación a una asesora humana de PRAIE. "
+            "Úsala cuando la clienta tenga: problemas con un pedido existente, "
+            "solicitudes de devolución o cambio, quejas, o cualquier situación "
+            "que no puedas resolver como agente. NUNCA intentes resolver "
+            "temas de logística, devoluciones o cobros — siempre escala."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "motivo": {
+                    "type": "string",
+                    "description": (
+                        "Razón del escalamiento. Ej: 'pedido no llegó', "
+                        "'producto defectuoso', 'quiere devolución'"
+                    ),
+                },
+                "resumen": {
+                    "type": "string",
+                    "description": "Breve resumen del problema para que la asesora tenga contexto.",
+                },
+            },
+            "required": ["motivo"],
+        },
+    },
 ]
 
 
@@ -100,6 +127,13 @@ async def _ejecutar_herramienta(nombre: str, parametros: dict) -> str:
                 f"  Link: {p['url']}"
             )
         return "\n\n".join(lineas)
+    if nombre == "escalate_to_human":
+        motivo = parametros.get("motivo", "motivo no especificado")
+        resumen = parametros.get("resumen", "")
+        logger.warning(f"ESCALAMIENTO A HUMANO — motivo: {motivo} | resumen: {resumen}")
+        # Aquí se puede agregar integración con CRM, Slack, email, etc.
+        # Por ahora registra el evento en logs para que el equipo lo vea
+        return "ESCALAMIENTO_REGISTRADO"
     return f"Herramienta '{nombre}' no reconocida."
 
 
