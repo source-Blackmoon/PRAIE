@@ -371,6 +371,7 @@ query BuscarProductos($query: String!, $first: Int!) {
             node {
               title
               price
+              compareAtPrice
               availableForSale
               inventoryQuantity
             }
@@ -477,6 +478,94 @@ async def buscar_productos_shopify(query: str, limit: int = 2) -> list[dict]:
     except Exception as e:
         logger.error(f"Error buscando productos: {e}")
         return []
+
+
+async def buscar_ofertas_shopify(limit: int = 3) -> list[dict]:
+    """
+    Busca productos en oferta (con precio rebajado) en Shopify.
+    Estrategia 1: query con tag:sale o tag:oferta.
+    Estrategia 2: filtrar client-side por compareAtPrice > price.
+    """
+    if not SHOPIFY_ACCESS_TOKEN or SHOPIFY_ACCESS_TOKEN.startswith("REEMPLAZAR"):
+        logger.warning("SHOPIFY_ACCESS_TOKEN no configurado")
+        return []
+
+    limit = max(1, min(limit, 5))
+    url = f"{_base_url()}/graphql.json"
+
+    # Intentar varias estrategias de búsqueda
+    queries_oferta = [
+        "compare_at_price:>0 status:active",
+        "(tag:sale OR tag:oferta OR tag:descuento) status:active",
+        "tag:sale status:active",
+    ]
+
+    for q in queries_oferta:
+        payload = {
+            "query": GRAPHQL_BUSCAR_PRODUCTOS,
+            "variables": {"query": q, "first": 20},
+        }
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                r = await client.post(url, json=payload, headers=_headers())
+                if r.status_code != 200:
+                    continue
+                data = r.json()
+                edges = data.get("data", {}).get("products", {}).get("edges", [])
+        except Exception as e:
+            logger.error(f"Error buscando ofertas ({q}): {e}")
+            continue
+
+        resultado = []
+        for edge in edges:
+            p = edge["node"]
+            if p.get("status") != "ACTIVE":
+                continue
+
+            variantes = [e["node"] for e in p.get("variants", {}).get("edges", [])]
+
+            # Filtrar variantes con stock y con descuento real
+            variantes_oferta = [
+                v for v in variantes
+                if v.get("availableForSale")
+                and v.get("inventoryQuantity", 1) > 0
+                and v.get("compareAtPrice")
+                and float(v["compareAtPrice"]) > float(v["price"])
+            ]
+
+            # Si ninguna variante tiene descuento, omitir el producto
+            if not variantes_oferta:
+                continue
+
+            tallas = [
+                v["title"] for v in variantes_oferta
+                if v.get("title") != "Default Title"
+            ]
+
+            precios = sorted(set(float(v["price"]) for v in variantes_oferta))
+            precios_antes = sorted(set(float(v["compareAtPrice"]) for v in variantes_oferta))
+
+            precio_str = _formatear_precio_cop(precios[0]) if precios else "Consultar"
+            precio_antes_str = _formatear_precio_cop(precios_antes[-1]) if precios_antes else ""
+
+            resultado.append({
+                "titulo": p.get("title", ""),
+                "precio": precio_str,
+                "precio_antes": precio_antes_str,
+                "tallas": tallas,
+                "url": f"https://praie.co/products/{p.get('handle', '')}",
+                "imagen": (p.get("featuredImage") or {}).get("url", ""),
+            })
+
+            if len(resultado) >= limit:
+                break
+
+        if resultado:
+            logger.info(f"Shopify ofertas encontradas: {len(resultado)} (query: {q})")
+            return resultado
+
+    logger.info("No se encontraron productos en oferta en Shopify")
+    return []
 
 
 async def verificar_credenciales() -> dict:

@@ -43,6 +43,25 @@ TOOLS = [
         },
     },
     {
+        "name": "buscar_ofertas",
+        "description": (
+            "Busca productos que tienen precio rebajado (en oferta o descuento) en el catálogo de PRAIE. "
+            "Úsala cuando la clienta pregunte por ofertas, descuentos, promociones, rebajas o precios especiales. "
+            "Retorna productos con precio actual y precio original para mostrar el ahorro."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": "Máximo de productos en oferta a retornar (1-5). Default: 3.",
+                    "default": 3,
+                },
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "escalate_to_human",
         "description": (
             "Transfiere la conversación a una asesora humana de PRAIE. "
@@ -134,6 +153,23 @@ async def _ejecutar_herramienta(nombre: str, parametros: dict) -> str:
             lineas.append(
                 f"• {p['titulo']}\n"
                 f"  Precio: {p['precio']}\n"
+                f"  Tallas disponibles: {tallas_str}\n"
+                f"  Link: {p['url']}"
+            )
+        return "\n\n".join(lineas)
+    if nombre == "buscar_ofertas":
+        from agent.shopify import buscar_ofertas_shopify
+        limit = parametros.get("limit", 3)
+        productos = await buscar_ofertas_shopify(limit)
+        if not productos:
+            return "No encontré productos en oferta en este momento."
+        lineas = []
+        for p in productos:
+            tallas_str = ", ".join(p["tallas"]) if p["tallas"] else "consultar disponibilidad"
+            descuento = f"  ~~{p['precio_antes']}~~ → {p['precio']}" if p.get("precio_antes") else f"  Precio: {p['precio']}"
+            lineas.append(
+                f"• {p['titulo']}\n"
+                f"{descuento}\n"
                 f"  Tallas disponibles: {tallas_str}\n"
                 f"  Link: {p['url']}"
             )
