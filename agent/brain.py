@@ -17,7 +17,9 @@ TOOLS = [
         "description": (
             "Busca productos disponibles en el catálogo de PRAIE en Shopify. "
             "Úsala cuando la clienta pregunte por un tipo de vestido, talla, color, "
-            "nueva colección, o pida recomendaciones. Siempre busca antes de recomendar. "
+            "nueva colección, o pida recomendaciones. También úsala cuando pregunte "
+            "por ofertas, descuentos, promociones o productos en rebaja — busca con "
+            "el término 'sale' o 'descuento'. Siempre busca antes de recomendar. "
             "Nunca inventes nombres de productos."
         ),
         "input_schema": {
@@ -27,7 +29,8 @@ TOOLS = [
                     "type": "string",
                     "description": (
                         "Término de búsqueda. Ej: 'enterizo control abdomen', "
-                        "'bikini talla grande', 'nueva colección', 'trikini'"
+                        "'bikini talla grande', 'nueva colección', 'trikini', "
+                        "'sale', 'descuento'"
                     ),
                 },
                 "limit": {
