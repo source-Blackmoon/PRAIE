@@ -163,7 +163,6 @@ async def scheduler_carritos():
     logger.info("Scheduler de carritos abandonados iniciado")
 
     while True:
-        await asyncio.sleep(15 * 60)  # Revisar cada 15 minutos
         try:
             pendientes = await obtener_checkouts_pendientes(MINUTOS_ESPERA)
             if pendientes:
@@ -184,3 +183,4 @@ async def scheduler_carritos():
 
         except Exception as e:
             logger.error(f"Error en scheduler de carritos: {e}")
+        await asyncio.sleep(15 * 60)  # Esperar 15 minutos antes del siguiente ciclo

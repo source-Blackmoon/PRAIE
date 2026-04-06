@@ -1,4 +1,5 @@
 import os
+import time
 import yaml
 import logging
 from pathlib import Path
@@ -88,17 +89,24 @@ def _cargar_knowledge() -> str:
             contenido = archivo.read_text(encoding="utf-8").strip()
             if contenido:
                 secciones.append(f"## {archivo.stem.replace('_', ' ').title()}\n{contenido}")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"No se pudo leer {archivo.name}: {e}")
     return "\n\n".join(secciones)
 
 
+_prompt_cache: tuple[str, float] | None = None
+_PROMPT_TTL = 60  # segundos — permite ver cambios del dashboard sin reiniciar
+
+
 def cargar_system_prompt() -> str:
-    base = _cargar_prompts().get("system_prompt", "Eres Laura, asistente de PRAIE. Responde en español.")
-    knowledge = _cargar_knowledge()
-    if knowledge:
-        return f"{base}\n\n# INFORMACIÓN ADICIONAL DEL NEGOCIO\n{knowledge}"
-    return base
+    global _prompt_cache
+    now = time.time()
+    if _prompt_cache is None or now - _prompt_cache[1] > _PROMPT_TTL:
+        base = _cargar_prompts().get("system_prompt", "Eres Laura, asistente de PRAIE. Responde en español.")
+        knowledge = _cargar_knowledge()
+        content = f"{base}\n\n# INFORMACIÓN ADICIONAL DEL NEGOCIO\n{knowledge}" if knowledge else base
+        _prompt_cache = (content, now)
+    return _prompt_cache[0]
 
 
 def obtener_mensaje_error() -> str:

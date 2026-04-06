@@ -1,4 +1,4 @@
-# AgentKit — WhatsApp AI Agent Builder
+# AgentKit — Constructor de Agentes WhatsApp con IA
 
 Construye tu propio agente de WhatsApp con inteligencia artificial en menos de 30 minutos.
 No necesitas saber programar. Claude Code construye todo por ti.
@@ -22,15 +22,25 @@ Tu solo respondes preguntas sobre tu negocio. Claude Code se encarga de:
 
 ## Como funciona? (El flujo completo)
 
-### Paso 1: Tu clonas el repo y corres un comando
+### Paso 1: Tu clonas el repo y preparas el entorno
 
 ```bash
 git clone https://github.com/Hainrixz/whatsapp-agentkit.git
 cd whatsapp-agentkit
+
+# Crear el entorno virtual e instalar dependencias
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+
+# Copiar el archivo de configuracion
+cp .env.example .env
+
+# Arrancar backend y frontend
 bash start.sh
 ```
 
-`start.sh` solo verifica que tengas Python 3.11+ y Claude Code instalados.
+`start.sh` levanta el servidor backend (FastAPI) y el dashboard frontend (Next.js).
+Requiere que el entorno virtual `.venv` ya exista — por eso se crea en el paso anterior.
 
 ### Paso 2: Abres Claude Code y escribes /build-agent
 
@@ -199,17 +209,22 @@ claude
 
 ---
 
-## Inicio rapido (3 comandos)
+## Inicio rapido
 
 ```bash
 # 1. Clona el repositorio
 git clone https://github.com/Hainrixz/whatsapp-agentkit.git
 cd whatsapp-agentkit
 
-# 2. Verifica tu entorno
+# 2. Prepara el entorno
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+cp .env.example .env
+
+# 3. Arranca el servidor
 bash start.sh
 
-# 3. Abre Claude Code y construye tu agente
+# 4. En otra terminal, abre Claude Code y construye tu agente
 claude
 # Escribe: /build-agent
 ```
@@ -261,10 +276,13 @@ AgentKit soporta 3 proveedores. Tu eliges cual usar durante el setup.
 
 ```bash
 # Probar el agente sin WhatsApp (chat en terminal)
-python tests/test_local.py
+.venv/bin/python tests/test_local.py
 
-# Arrancar el servidor localmente
-uvicorn agent.main:app --reload --port 8000
+# Arrancar solo el backend
+.venv/bin/uvicorn agent.main:app --reload --port 8000
+
+# Arrancar backend + frontend juntos
+bash start.sh
 
 # Build Docker para produccion
 docker compose up --build

@@ -112,8 +112,8 @@ async def webhook_verificacion(request: Request):
 async def _procesar_mensaje(telefono: str, texto: str, historial: list):
     """Procesa el mensaje y envía la respuesta en background."""
     try:
-        respuesta = await generar_respuesta(texto, historial)
         await guardar_mensaje(telefono, "user", texto)
+        respuesta = await generar_respuesta(texto, historial)
         await guardar_mensaje(telefono, "assistant", respuesta)
         ok = await proveedor.enviar_mensaje(telefono, respuesta)
         if ok:
