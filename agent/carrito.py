@@ -18,6 +18,7 @@ from agent.memory import (
     guardar_checkout, obtener_checkouts_pendientes,
     marcar_mensaje_enviado, marcar_checkout_completado,
     tuvo_conversacion_reciente, registrar_conversion,
+    obtener_config,
 )
 from agent.providers import obtener_proveedor
 
@@ -25,6 +26,17 @@ logger = logging.getLogger("agentkit.carrito")
 
 MINUTOS_ESPERA = int(os.getenv("CARRITO_ESPERA_MINUTOS", "60"))
 SHOPIFY_SECRET = os.getenv("SHOPIFY_WEBHOOK_SECRET", "")
+
+TEMPLATE_CARRITO_KEY = "carrito_mensaje_template"
+TEMPLATE_CARRITO_DEFAULT = (
+    "¡Hola {nombre}! 👋\n\n"
+    "Vimos que dejaste {productos} en tu carrito de PRAIE{total_str} ♡\n\n"
+    "¿Tienes alguna duda sobre la talla, el color o el envío? "
+    "Aquí estoy para ayudarte 😊\n\n"
+    "👉 Completa tu compra aquí:\n{url_carrito}\n\n"
+    "Recuerda que puedes pagar contraentrega — "
+    "recibes primero y pagas cuando llegue ♡"
+)
 
 
 # ── Verificación HMAC de Shopify ───────────────────────────
@@ -102,18 +114,17 @@ def extraer_datos_checkout(payload: dict) -> dict | None:
 
 
 # ── Construir el mensaje de recuperación ──────────────────
-def construir_mensaje(nombre: str, productos: str, total: str, url_carrito: str) -> str:
-    nombre_str = nombre.capitalize() if nombre != "amiga" else "amiga"
+async def construir_mensaje(nombre: str, productos: str, total: str, url_carrito: str) -> str:
+    """Construye el mensaje usando el template guardado en DB (o el default si no hay)."""
+    template = await obtener_config(TEMPLATE_CARRITO_KEY, TEMPLATE_CARRITO_DEFAULT)
+    nombre_fmt = nombre.capitalize() if nombre != "amiga" else "amiga"
     total_str = f" por {total}" if total else ""
-
-    return (
-        f"¡Hola {nombre_str}! 👋\n\n"
-        f"Vimos que dejaste {productos} en tu carrito de PRAIE{total_str} ♡\n\n"
-        f"¿Tienes alguna duda sobre la talla, el color o el envío? "
-        f"Aquí estoy para ayudarte 😊\n\n"
-        f"👉 Completa tu compra aquí:\n{url_carrito}\n\n"
-        f"Recuerda que puedes pagar contraentrega — "
-        f"recibes primero y pagas cuando llegue ♡"
+    return template.format(
+        nombre=nombre_fmt,
+        productos=productos,
+        total=total,
+        total_str=total_str,
+        url_carrito=url_carrito,
     )
 
 
@@ -216,7 +227,7 @@ async def scheduler_carritos():
                 logger.info(f"Carritos abandonados a procesar: {len(pendientes)}")
 
             for checkout in pendientes:
-                mensaje = construir_mensaje(
+                mensaje = await construir_mensaje(
                     checkout.nombre, checkout.productos,
                     checkout.total, checkout.url_carrito,
                 )

@@ -2,7 +2,7 @@ import os
 from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy import String, Text, DateTime, select, Integer, Boolean, func
+from sqlalchemy import String, Text, DateTime, select, Integer, Boolean, func, update
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -43,6 +43,15 @@ class CheckoutAbandonado(Base):
     mensaje_enviado: Mapped[bool] = mapped_column(Boolean, default=False)
     completado: Mapped[bool] = mapped_column(Boolean, default=False)
     timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class ConfiguracionSistema(Base):
+    """Tabla de configuración clave-valor para parámetros del sistema."""
+    __tablename__ = "configuracion"
+
+    clave: Mapped[str] = mapped_column(String(100), primary_key=True)
+    valor: Mapped[str] = mapped_column(Text, default="")
+    actualizado: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class Conversion(Base):
@@ -188,6 +197,31 @@ async def obtener_conversiones(dias: int = 30) -> list:
             .order_by(Conversion.timestamp.desc())
         )
         return result.scalars().all()
+
+
+async def obtener_config(clave: str, default: str = "") -> str:
+    """Lee un valor de configuración por clave. Retorna default si no existe."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(ConfiguracionSistema).where(ConfiguracionSistema.clave == clave)
+        )
+        row = result.scalar_one_or_none()
+        return row.valor if row else default
+
+
+async def guardar_config(clave: str, valor: str):
+    """Guarda o actualiza un valor de configuración."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(ConfiguracionSistema).where(ConfiguracionSistema.clave == clave)
+        )
+        row = result.scalar_one_or_none()
+        if row:
+            row.valor = valor
+            row.actualizado = datetime.utcnow()
+        else:
+            session.add(ConfiguracionSistema(clave=clave, valor=valor))
+        await session.commit()
 
 
 async def limpiar_historial(telefono: str):

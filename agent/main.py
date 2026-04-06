@@ -15,12 +15,13 @@ from agent.memory import (
     inicializar_db, guardar_mensaje, obtener_historial,
     obtener_checkouts_pendientes, marcar_mensaje_enviado,
     CheckoutAbandonado, Mensaje, Conversion, async_session,
-    obtener_conversiones,
+    obtener_conversiones, obtener_config, guardar_config,
 )
 from agent.providers import obtener_proveedor
 from agent.carrito import (
     recibir_checkout, recibir_orden_completada,
     scheduler_carritos, construir_mensaje,
+    TEMPLATE_CARRITO_KEY, TEMPLATE_CARRITO_DEFAULT,
 )
 from agent.shopify import (
     sincronizar_checkouts, verificar_credenciales,
@@ -292,7 +293,7 @@ async def enviar_carrito_manual(checkout_id: str, _: None = Depends(verificar_ap
     if checkout.completado:
         raise HTTPException(status_code=400, detail="El carrito ya fue completado (cliente pagó)")
 
-    mensaje = construir_mensaje(
+    mensaje = await construir_mensaje(
         checkout.nombre, checkout.productos,
         checkout.total, checkout.url_carrito,
     )
@@ -304,6 +305,60 @@ async def enviar_carrito_manual(checkout_id: str, _: None = Depends(verificar_ap
         return {"status": "ok", "mensaje": mensaje}
     else:
         raise HTTPException(status_code=500, detail="Error al enviar el mensaje por WhatsApp")
+
+
+# ── Mensaje de carrito abandonado ─────────────────────────
+@app.get("/api/carritos/mensaje")
+async def get_mensaje_carrito(_: None = Depends(verificar_api_key)):
+    """Devuelve el template del mensaje de carrito abandonado y un preview de ejemplo."""
+    template = await obtener_config(TEMPLATE_CARRITO_KEY, TEMPLATE_CARRITO_DEFAULT)
+    preview = template.format(
+        nombre="María",
+        productos="Vestido de baño talla M (x1)",
+        total="$150.000 COP",
+        total_str=" por $150.000 COP",
+        url_carrito="https://praie.co/checkout/abc123",
+    )
+    return {
+        "template": template,
+        "preview": preview,
+        "variables": ["{nombre}", "{productos}", "{total}", "{total_str}", "{url_carrito}"],
+        "descripcion_variables": {
+            "{nombre}": "Nombre del cliente (ej: María)",
+            "{productos}": "Productos dejados en el carrito",
+            "{total}": "Total del carrito (ej: $150.000 COP) — vacío si no hay",
+            "{total_str}": "Total con prefijo ' por ' (ej: ' por $150.000 COP') — vacío si no hay",
+            "{url_carrito}": "Enlace para completar la compra",
+        },
+    }
+
+
+@app.put("/api/carritos/mensaje")
+async def update_mensaje_carrito(request: Request, _: None = Depends(verificar_api_key)):
+    """Actualiza el template del mensaje de carrito abandonado."""
+    body = await request.json()
+    template = body.get("template", "").strip()
+    if not template:
+        raise HTTPException(status_code=400, detail="El template no puede estar vacío")
+    if "{url_carrito}" not in template:
+        raise HTTPException(status_code=400, detail="El template debe contener {url_carrito}")
+    # Validar que el template no tenga variables desconocidas (format_map con SafeDict)
+    try:
+        template.format(
+            nombre="test", productos="test", total="test",
+            total_str="test", url_carrito="test",
+        )
+    except KeyError as e:
+        raise HTTPException(status_code=400, detail=f"Variable desconocida en el template: {e}")
+    await guardar_config(TEMPLATE_CARRITO_KEY, template)
+    preview = template.format(
+        nombre="María",
+        productos="Vestido de baño talla M (x1)",
+        total="$150.000 COP",
+        total_str=" por $150.000 COP",
+        url_carrito="https://praie.co/checkout/abc123",
+    )
+    return {"status": "ok", "preview": preview}
 
 
 # ── API del dashboard Next.js ──────────────────────────────
