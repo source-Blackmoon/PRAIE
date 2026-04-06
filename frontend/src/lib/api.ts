@@ -1,4 +1,4 @@
-import type { Carrito, ConversacionResumen, KnowledgeFile, Mensaje, Metricas } from '@/types'
+import type { Carrito, Conversion, ConversacionResumen, KnowledgeFile, Mensaje, Metricas } from '@/types'
 
 const BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -21,6 +21,10 @@ export const api = {
     req<Carrito[]>('/api/carritos'),
   enviarCarrito: (checkoutId: string) =>
     req<{ status: string }>(`/api/carritos/${checkoutId}/enviar`, { method: 'POST' }),
+
+  // Conversiones (ventas cerradas por chat)
+  conversiones: (dias = 30) =>
+    req<Conversion[]>(`/api/conversiones?dias=${dias}`),
 
   // Conversaciones
   conversaciones: (dias = 7) =>

@@ -10,6 +10,20 @@ export interface Metricas {
   tasa_recuperacion: number
   valor_recuperado: number
   valor_pendiente: number
+  ventas_cerradas_total: number
+  ventas_por_chat: number
+  ventas_por_carrito: number
+}
+
+export interface Conversion {
+  id: number
+  telefono: string
+  order_id: string
+  order_total: string
+  productos: string
+  fuente: 'chat' | 'carrito' | 'ambos'
+  dias_desde_chat: number
+  timestamp: string
 }
 
 export interface Carrito {
