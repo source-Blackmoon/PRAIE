@@ -14,7 +14,8 @@ from agent.brain import generar_respuesta
 from agent.memory import (
     inicializar_db, guardar_mensaje, obtener_historial,
     obtener_checkouts_pendientes, marcar_mensaje_enviado,
-    CheckoutAbandonado, Mensaje, async_session,
+    CheckoutAbandonado, Mensaje, Conversion, async_session,
+    obtener_conversiones,
 )
 from agent.providers import obtener_proveedor
 from agent.carrito import (
@@ -326,6 +327,11 @@ async def get_metricas(dias: int = 7, _: None = Depends(verificar_api_key)):
         result_carritos = await session.execute(select(CheckoutAbandonado))
         carritos = result_carritos.scalars().all()
 
+        result_conv = await session.execute(
+            select(Conversion).where(Conversion.timestamp >= limite)
+        )
+        conversiones = result_conv.scalars().all()
+
     # Métricas de mensajes
     if not mensajes:
         conversaciones = 0
@@ -364,6 +370,9 @@ async def get_metricas(dias: int = 7, _: None = Depends(verificar_api_key)):
     valor_recuperado = sum(_parse_total(c.total) for c in carritos if c.completado)
     valor_pendiente = sum(_parse_total(c.total) for c in carritos if c.mensaje_enviado and not c.completado)
 
+    ventas_por_chat = sum(1 for c in conversiones if c.fuente in ("chat", "ambos"))
+    ventas_por_carrito = sum(1 for c in conversiones if c.fuente in ("carrito", "ambos"))
+
     return {
         "conversaciones": conversaciones,
         "clientas": clientas,
@@ -376,6 +385,9 @@ async def get_metricas(dias: int = 7, _: None = Depends(verificar_api_key)):
         "tasa_recuperacion": tasa_recuperacion,
         "valor_recuperado": valor_recuperado,
         "valor_pendiente": valor_pendiente,
+        "ventas_cerradas_total": len(conversiones),
+        "ventas_por_chat": ventas_por_chat,
+        "ventas_por_carrito": ventas_por_carrito,
     }
 
 
@@ -417,6 +429,25 @@ async def get_mensajes_conversacion(telefono: str, _: None = Depends(verificar_a
     return [
         {"id": m.id, "role": m.role, "content": m.content, "timestamp": m.timestamp.isoformat()}
         for m in mensajes
+    ]
+
+
+@app.get("/api/conversiones")
+async def get_conversiones(dias: int = 30, _: None = Depends(verificar_api_key)):
+    """Lista de ventas cerradas atribuidas a conversaciones con Laura."""
+    conversiones = await obtener_conversiones(dias)
+    return [
+        {
+            "id": c.id,
+            "telefono": c.telefono,
+            "order_id": c.order_id,
+            "order_total": c.order_total,
+            "productos": c.productos,
+            "fuente": c.fuente,
+            "dias_desde_chat": c.dias_desde_chat,
+            "timestamp": c.timestamp.isoformat(),
+        }
+        for c in conversiones
     ]
 
 

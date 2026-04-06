@@ -17,6 +17,7 @@ from fastapi import Request, HTTPException
 from agent.memory import (
     guardar_checkout, obtener_checkouts_pendientes,
     marcar_mensaje_enviado, marcar_checkout_completado,
+    tuvo_conversacion_reciente, registrar_conversion,
 )
 from agent.providers import obtener_proveedor
 
@@ -139,13 +140,16 @@ async def recibir_checkout(request: Request):
 
 
 async def recibir_orden_completada(request: Request):
-    """Endpoint POST /shopify/orden — marca checkout como completado."""
+    """Endpoint POST /shopify/orden — marca checkout como completado y registra conversión."""
     body = await request.body()
     hmac_header = request.headers.get("X-Shopify-Hmac-Sha256", "")
     environment = os.getenv("ENVIRONMENT", "development")
     if SHOPIFY_SECRET and environment == "production" and not verificar_shopify_hmac(body, hmac_header):
         raise HTTPException(status_code=401, detail="HMAC inválido")
+
     payload = __import__("json").loads(body)
+
+    # Marcar el carrito abandonado como completado
     checkout_token = (
         payload.get("checkout_token") or
         payload.get("order", {}).get("checkout_token", "")
@@ -153,6 +157,49 @@ async def recibir_orden_completada(request: Request):
     if checkout_token:
         await marcar_checkout_completado(checkout_token)
         logger.info(f"Orden completada — checkout {checkout_token} marcado")
+
+    # Extraer datos de la orden para rastrear conversión
+    order = payload if "line_items" in payload else payload.get("order", payload)
+    order_id = str(order.get("id", ""))
+
+    telefono = (
+        order.get("phone") or
+        (order.get("billing_address") or {}).get("phone") or
+        (order.get("shipping_address") or {}).get("phone") or
+        (order.get("customer") or {}).get("phone") or ""
+    )
+    telefono = "".join(filter(str.isdigit, telefono))
+    if len(telefono) == 10 and telefono.startswith("3"):
+        telefono = "57" + telefono
+
+    if order_id and telefono:
+        # Verificar si hubo conversación con Laura en los últimos 7 días
+        dias = await tuvo_conversacion_reciente(telefono, dias=7)
+        tuvo_carrito = bool(checkout_token)
+        fuente = "ambos" if (dias >= 0 and tuvo_carrito) else ("chat" if dias >= 0 else "carrito")
+
+        if dias >= 0 or tuvo_carrito:
+            items = order.get("line_items", [])
+            productos = ", ".join(
+                f"{it.get('title', 'producto')} (x{it.get('quantity', 1)})"
+                for it in items[:3]
+            )
+            total = order.get("total_price", "")
+            try:
+                total = f"${float(total):,.0f} COP".replace(",", ".")
+            except Exception:
+                pass
+
+            await registrar_conversion(
+                telefono=telefono,
+                order_id=order_id,
+                order_total=total,
+                productos=productos,
+                fuente=fuente,
+                dias_desde_chat=max(dias, 0),
+            )
+            logger.info(f"Conversión registrada — orden {order_id} | teléfono {telefono} | fuente: {fuente}")
+
     return {"status": "ok"}
 
 

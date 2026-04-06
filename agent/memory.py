@@ -2,7 +2,7 @@ import os
 from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy import String, Text, DateTime, select, Integer, Boolean
+from sqlalchemy import String, Text, DateTime, select, Integer, Boolean, func
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -42,6 +42,21 @@ class CheckoutAbandonado(Base):
     url_carrito: Mapped[str] = mapped_column(Text, default="")
     mensaje_enviado: Mapped[bool] = mapped_column(Boolean, default=False)
     completado: Mapped[bool] = mapped_column(Boolean, default=False)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class Conversion(Base):
+    """Venta cerrada atribuida a una conversación de WhatsApp con Laura."""
+    __tablename__ = "conversiones"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    telefono: Mapped[str] = mapped_column(String(50), index=True)
+    order_id: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    order_total: Mapped[str] = mapped_column(String(50), default="")
+    productos: Mapped[str] = mapped_column(Text, default="")
+    # "chat" = solo hubo chat, "carrito" = solo carrito abandonado, "ambos" = los dos
+    fuente: Mapped[str] = mapped_column(String(20), default="chat")
+    dias_desde_chat: Mapped[int] = mapped_column(Integer, default=0)
     timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
@@ -117,6 +132,62 @@ async def marcar_checkout_completado(checkout_id: str):
         if checkout:
             checkout.completado = True
             await session.commit()
+
+
+async def tuvo_conversacion_reciente(telefono: str, dias: int = 7) -> int:
+    """
+    Retorna los días transcurridos desde el último mensaje con este teléfono.
+    Retorna -1 si no hubo conversación en el período indicado.
+    """
+    limite = datetime.utcnow() - timedelta(days=dias)
+    async with async_session() as session:
+        result = await session.execute(
+            select(func.max(Mensaje.timestamp))
+            .where(Mensaje.telefono == telefono)
+            .where(Mensaje.timestamp >= limite)
+        )
+        ultimo = result.scalar_one_or_none()
+        if not ultimo:
+            return -1
+        return (datetime.utcnow() - ultimo).days
+
+
+async def registrar_conversion(
+    telefono: str,
+    order_id: str,
+    order_total: str = "",
+    productos: str = "",
+    fuente: str = "chat",
+    dias_desde_chat: int = 0,
+):
+    """Registra una venta cerrada atribuida a una conversación de WhatsApp."""
+    async with async_session() as session:
+        existente = await session.execute(
+            select(Conversion).where(Conversion.order_id == order_id)
+        )
+        if existente.scalar_one_or_none():
+            return  # Ya registrada
+        session.add(Conversion(
+            telefono=telefono,
+            order_id=order_id,
+            order_total=order_total,
+            productos=productos,
+            fuente=fuente,
+            dias_desde_chat=dias_desde_chat,
+        ))
+        await session.commit()
+
+
+async def obtener_conversiones(dias: int = 30) -> list:
+    """Retorna las conversiones registradas en los últimos N días."""
+    limite = datetime.utcnow() - timedelta(days=dias)
+    async with async_session() as session:
+        result = await session.execute(
+            select(Conversion)
+            .where(Conversion.timestamp >= limite)
+            .order_by(Conversion.timestamp.desc())
+        )
+        return result.scalars().all()
 
 
 async def limpiar_historial(telefono: str):
