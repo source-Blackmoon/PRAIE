@@ -19,6 +19,9 @@ from agent.memory import (
     marcar_mensaje_enviado, marcar_checkout_completado,
     tuvo_conversacion_reciente, registrar_conversion,
     obtener_config,
+    registrar_evento_funnel, TipoEventoFunnel, MetadataEvento,
+    obtener_test_ab_activo, asignar_variante_ab,
+    registrar_asignacion_ab, marcar_conversion_ab,
 )
 from agent.providers import obtener_proveedor
 
@@ -146,6 +149,11 @@ async def recibir_checkout(request: Request):
         return {"status": "sin_telefono"}
 
     await guardar_checkout(**datos)
+    # Funnel: registrar carrito creado
+    await registrar_evento_funnel(
+        datos["telefono"], TipoEventoFunnel.CARRITO_CREADO,
+        MetadataEvento(checkout_id=datos["checkout_id"], total=datos.get("total", "")),
+    )
     logger.info(f"Checkout guardado: {datos['checkout_id']} — {datos['telefono']}")
     return {"status": "ok", "checkout_id": datos["checkout_id"]}
 
@@ -209,6 +217,13 @@ async def recibir_orden_completada(request: Request):
                 fuente=fuente,
                 dias_desde_chat=max(dias, 0),
             )
+            # Funnel: registrar compra realizada
+            await registrar_evento_funnel(
+                telefono, TipoEventoFunnel.COMPRA_REALIZADA,
+                MetadataEvento(order_id=order_id, total=total, fuente=fuente),
+            )
+            # Marcar conversion en A/B test si aplica
+            await marcar_conversion_ab(telefono)
             logger.info(f"Conversión registrada — orden {order_id} | teléfono {telefono} | fuente: {fuente}")
 
     return {"status": "ok"}
@@ -226,11 +241,31 @@ async def scheduler_carritos():
             if pendientes:
                 logger.info(f"Carritos abandonados a procesar: {len(pendientes)}")
 
+            # Verificar si hay test A/B activo
+            test_ab = await obtener_test_ab_activo()
+
             for checkout in pendientes:
-                mensaje = await construir_mensaje(
-                    checkout.nombre, checkout.productos,
-                    checkout.total, checkout.url_carrito,
-                )
+                if test_ab:
+                    # A/B: asignar variante y usar template correspondiente
+                    variante = asignar_variante_ab(checkout.telefono, test_ab.id)
+                    template = test_ab.variante_a if variante == "a" else test_ab.variante_b
+                    nombre_fmt = checkout.nombre.capitalize() if checkout.nombre != "amiga" else "amiga"
+                    total_str = f" por {checkout.total}" if checkout.total else ""
+                    mensaje = template.format(
+                        nombre=nombre_fmt,
+                        productos=checkout.productos,
+                        total=checkout.total,
+                        total_str=total_str,
+                        url_carrito=checkout.url_carrito,
+                    )
+                    await registrar_asignacion_ab(checkout.telefono, test_ab.id, variante)
+                    logger.info(f"A/B test #{test_ab.id}: variante {variante} para {checkout.telefono}")
+                else:
+                    mensaje = await construir_mensaje(
+                        checkout.nombre, checkout.productos,
+                        checkout.total, checkout.url_carrito,
+                    )
+
                 enviado = await proveedor.enviar_mensaje(checkout.telefono, mensaje)
 
                 if enviado:

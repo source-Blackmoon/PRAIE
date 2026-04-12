@@ -14,8 +14,11 @@ from agent.brain import generar_respuesta
 from agent.memory import (
     inicializar_db, guardar_mensaje, obtener_historial,
     obtener_checkouts_pendientes, marcar_mensaje_enviado,
-    CheckoutAbandonado, Mensaje, Conversion, async_session,
+    CheckoutAbandonado, Mensaje, Conversion, Escalacion, async_session,
     obtener_conversiones, obtener_config, guardar_config,
+    registrar_evento_funnel, TipoEventoFunnel, MetadataEvento,
+    obtener_funnel, crear_escalacion, obtener_escalaciones, resolver_escalacion,
+    obtener_tests_ab, crear_test_ab, pausar_test_ab, obtener_resultados_ab,
 )
 from agent.providers import obtener_proveedor
 from agent.carrito import (
@@ -115,7 +118,9 @@ async def _procesar_mensaje(telefono: str, texto: str, historial: list):
     """Procesa el mensaje y envía la respuesta en background."""
     try:
         await guardar_mensaje(telefono, "user", texto)
-        respuesta = await generar_respuesta(texto, historial)
+        # Funnel: registrar mensaje recibido
+        await registrar_evento_funnel(telefono, TipoEventoFunnel.MENSAJE_RECIBIDO)
+        respuesta = await generar_respuesta(texto, historial, telefono)
         await guardar_mensaje(telefono, "assistant", respuesta)
         ok = await proveedor.enviar_mensaje(telefono, respuesta)
         if ok:
@@ -504,6 +509,86 @@ async def get_conversiones(dias: int = 30, _: None = Depends(verificar_api_key))
         }
         for c in conversiones
     ]
+
+
+# ── API Funnel Analytics ──────────────────────────────────
+@app.get("/api/funnel")
+async def get_funnel(dias: int = 7, _: None = Depends(verificar_api_key)):
+    """Retorna el funnel de conversion: mensajes → productos → carritos → compras."""
+    fecha_fin = datetime.utcnow()
+    fecha_inicio = fecha_fin - timedelta(days=dias)
+    funnel = await obtener_funnel(fecha_inicio, fecha_fin)
+    return funnel
+
+
+# ── API Escalaciones ─────────────────────────────────────
+@app.get("/api/escalaciones")
+async def get_escalaciones(estado: str | None = None, _: None = Depends(verificar_api_key)):
+    """Lista escalaciones, opcionalmente filtradas por estado (pendiente/resuelta)."""
+    escalaciones = await obtener_escalaciones(estado)
+    return [
+        {
+            "id": e.id,
+            "telefono": e.telefono,
+            "razon": e.razon,
+            "resumen": e.resumen,
+            "estado": e.estado,
+            "timestamp": e.timestamp.isoformat(),
+        }
+        for e in escalaciones
+    ]
+
+
+@app.put("/api/escalaciones/{escalacion_id}/resolver")
+async def put_resolver_escalacion(escalacion_id: int, _: None = Depends(verificar_api_key)):
+    """Marca una escalacion como resuelta."""
+    ok = await resolver_escalacion(escalacion_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Escalacion no encontrada")
+    return {"status": "ok"}
+
+
+# ── A/B Testing ──────────────────────────────────────────
+
+@app.get("/api/ab-tests")
+async def get_ab_tests(_: None = Depends(verificar_api_key)):
+    """Lista todos los tests A/B."""
+    tests = await obtener_tests_ab()
+    resultado = []
+    for t in tests:
+        stats = await obtener_resultados_ab(t.id)
+        resultado.append({
+            "id": t.id,
+            "nombre": t.nombre,
+            "variante_a": t.variante_a,
+            "variante_b": t.variante_b,
+            "activo": t.activo,
+            "fecha_inicio": t.fecha_inicio.isoformat(),
+            **stats,
+        })
+    return resultado
+
+
+@app.post("/api/ab-tests")
+async def post_crear_ab_test(request: Request, _: None = Depends(verificar_api_key)):
+    """Crea un nuevo test A/B. Desactiva el test activo previo."""
+    body = await request.json()
+    nombre = body.get("nombre", "")
+    variante_a = body.get("variante_a", "")
+    variante_b = body.get("variante_b", "")
+    if not nombre or not variante_a or not variante_b:
+        raise HTTPException(status_code=400, detail="nombre, variante_a y variante_b son requeridos")
+    test = await crear_test_ab(nombre, variante_a, variante_b)
+    return {"status": "ok", "id": test.id}
+
+
+@app.put("/api/ab-tests/{test_id}/pausar")
+async def put_pausar_ab_test(test_id: int, _: None = Depends(verificar_api_key)):
+    """Pausa un test A/B activo."""
+    ok = await pausar_test_ab(test_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Test no encontrado")
+    return {"status": "ok"}
 
 
 @app.get("/api/knowledge")

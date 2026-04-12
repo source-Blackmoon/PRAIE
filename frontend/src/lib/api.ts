@@ -41,6 +41,14 @@ export const api = {
       body: JSON.stringify({ content }),
     }),
 
+  // Escalaciones
+  escalaciones: (estado = 'pendiente') =>
+    req<{ id: number; telefono: string; razon: string; resumen: string; estado: string; timestamp: string }[]>(
+      `/api/escalaciones?estado=${estado}`
+    ),
+  resolverEscalacion: (id: number) =>
+    req<{ status: string }>(`/api/escalaciones/${id}/resolver`, { method: 'PUT' }),
+
   // Shopify
   shopifyStatus: () =>
     req<{ valid: boolean; shop?: string }>('/api/shopify/status'),

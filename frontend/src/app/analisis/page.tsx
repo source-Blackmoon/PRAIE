@@ -1,14 +1,176 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { Sparkles, Play, DollarSign, FileText } from 'lucide-react'
+import { Sparkles, Play, DollarSign, FileText, TrendingDown, FlaskConical, Pause, Plus } from 'lucide-react'
+
+interface FunnelStep {
+  paso: string
+  eventos: number
+  clientas_unicas: number
+}
+
+interface FunnelData {
+  periodo: { inicio: string; fin: string }
+  funnel: FunnelStep[]
+  valor_total_compras: number
+}
+
+interface ABTest {
+  id: number
+  nombre: string
+  variante_a: string
+  variante_b: string
+  activo: boolean
+  fecha_inicio: string
+  total_envios: number
+  significancia: boolean
+  variantes: {
+    a: { envios: number; conversiones: number }
+    b: { envios: number; conversiones: number }
+  }
+}
+
+const STEP_LABELS: Record<string, string> = {
+  mensaje_recibido: 'Mensajes recibidos',
+  producto_consultado: 'Productos consultados',
+  carrito_creado: 'Carritos creados',
+  compra_realizada: 'Compras realizadas',
+}
+
+const STEP_COLORS = ['#764ba2', '#9b6dd7', '#c084fc', '#e879f9']
+
+function FunnelChart({ data }: { data: FunnelData }) {
+  const maxEventos = Math.max(...data.funnel.map(s => s.eventos), 1)
+
+  return (
+    <div className="space-y-3">
+      {data.funnel.map((step, i) => {
+        const width = Math.max((step.eventos / maxEventos) * 100, 8)
+        const prevEventos = i > 0 ? data.funnel[i - 1].eventos : null
+        const dropoff = prevEventos && prevEventos > 0
+          ? Math.round((1 - step.eventos / prevEventos) * 100)
+          : null
+
+        return (
+          <div key={step.paso}>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-sm font-semibold" style={{ color: 'var(--color-text)' }}>
+                {STEP_LABELS[step.paso] || step.paso}
+              </span>
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-bold" style={{ color: STEP_COLORS[i] || '#764ba2' }}>
+                  {step.eventos}
+                </span>
+                <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                  ({step.clientas_unicas} clientas)
+                </span>
+                {dropoff !== null && dropoff > 0 && (
+                  <span className="text-xs font-medium px-1.5 py-0.5 rounded"
+                    style={{ background: '#fee2e2', color: '#dc2626' }}>
+                    -{dropoff}%
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="h-8 rounded-lg overflow-hidden" style={{ background: 'var(--color-muted)' }}>
+              <motion.div
+                initial={{ width: 0 }}
+                animate={{ width: `${width}%` }}
+                transition={{ duration: 0.6, delay: i * 0.1 }}
+                className="h-full rounded-lg"
+                style={{ background: STEP_COLORS[i] || '#764ba2' }}
+              />
+            </div>
+          </div>
+        )
+      })}
+
+      {data.valor_total_compras > 0 && (
+        <div className="mt-4 p-3 rounded-xl" style={{ background: '#d1fae5' }}>
+          <p className="text-sm font-bold" style={{ color: '#065f46' }}>
+            Valor total compras: ${data.valor_total_compras.toLocaleString('es-CO')} COP
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
 
 export default function AnalisisPage() {
   const [dias, setDias] = useState(7)
+  const [funnelData, setFunnelData] = useState<FunnelData | null>(null)
+  const [funnelLoading, setFunnelLoading] = useState(true)
   const [aplicar, setAplicar] = useState(true)
   const [running, setRunning] = useState(false)
   const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null)
+  const [abTests, setAbTests] = useState<ABTest[]>([])
+  const [abLoading, setAbLoading] = useState(true)
+  const [showAbForm, setShowAbForm] = useState(false)
+  const [abForm, setAbForm] = useState({ nombre: '', variante_a: '', variante_b: '' })
+
+  useEffect(() => {
+    const fetchFunnel = async () => {
+      setFunnelLoading(true)
+      try {
+        const BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+        const apiKey = process.env.NEXT_PUBLIC_API_KEY || ''
+        const res = await fetch(`${BASE}/api/funnel?dias=${dias}`, {
+          headers: apiKey ? { 'x-api-key': apiKey } : {},
+        })
+        if (res.ok) {
+          setFunnelData(await res.json())
+        }
+      } catch {
+        // silently fail, funnel section just won't show
+      } finally {
+        setFunnelLoading(false)
+      }
+    }
+    fetchFunnel()
+  }, [dias])
+
+  const fetchAbTests = async () => {
+    setAbLoading(true)
+    try {
+      const BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+      const apiKey = process.env.NEXT_PUBLIC_API_KEY || ''
+      const res = await fetch(`${BASE}/api/ab-tests`, {
+        headers: apiKey ? { 'x-api-key': apiKey } : {},
+      })
+      if (res.ok) setAbTests(await res.json())
+    } catch { /* silently fail */ } finally { setAbLoading(false) }
+  }
+
+  useEffect(() => { fetchAbTests() }, [])
+
+  const crearAbTest = async () => {
+    if (!abForm.nombre || !abForm.variante_a || !abForm.variante_b) return
+    try {
+      const BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+      const apiKey = process.env.NEXT_PUBLIC_API_KEY || ''
+      await fetch(`${BASE}/api/ab-tests`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(apiKey ? { 'x-api-key': apiKey } : {}) },
+        body: JSON.stringify(abForm),
+      })
+      setShowAbForm(false)
+      setAbForm({ nombre: '', variante_a: '', variante_b: '' })
+      fetchAbTests()
+    } catch { /* silently fail */ }
+  }
+
+  const pausarAbTest = async (id: number) => {
+    try {
+      const BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+      const apiKey = process.env.NEXT_PUBLIC_API_KEY || ''
+      await fetch(`${BASE}/api/ab-tests/${id}/pausar`, {
+        method: 'PUT',
+        headers: apiKey ? { 'x-api-key': apiKey } : {},
+      })
+      fetchAbTests()
+    } catch { /* silently fail */ }
+  }
 
   const ejecutar = async () => {
     setRunning(true)
@@ -40,6 +202,44 @@ export default function AnalisisPage() {
           Claude analiza las conversaciones reales y sugiere mejoras concretas
         </p>
       </div>
+
+      {/* Funnel de Conversion */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="rounded-2xl p-6 mb-6"
+        style={{ background: 'white', boxShadow: '0 2px 12px rgba(118,75,162,0.08)' }}
+      >
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl gradient-bg">
+              <TrendingDown size={18} className="text-white" />
+            </div>
+            <div>
+              <h2 className="font-bold text-base" style={{ color: 'var(--color-text)' }}>
+                Funnel de conversion
+              </h2>
+              <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                Ultimos {dias} dias
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {funnelLoading ? (
+          <div className="flex items-center justify-center py-12">
+            <div className="w-6 h-6 rounded-full border-2 border-purple-200 border-t-purple-600 animate-spin" />
+          </div>
+        ) : funnelData && funnelData.funnel.some(s => s.eventos > 0) ? (
+          <FunnelChart data={funnelData} />
+        ) : (
+          <div className="text-center py-12">
+            <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
+              Sin datos de funnel para este periodo. Los eventos se registran automaticamente cuando las clientas interactuan con Laura.
+            </p>
+          </div>
+        )}
+      </motion.div>
 
       <div className="grid grid-cols-2 gap-6">
         {/* Config card */}
@@ -216,6 +416,192 @@ export default function AnalisisPage() {
           </div>
         </motion.div>
       </div>
+
+      {/* A/B Testing */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.2 }}
+        className="rounded-2xl p-6 mt-6"
+        style={{ background: 'white', boxShadow: '0 2px 12px rgba(118,75,162,0.08)' }}
+      >
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl gradient-bg">
+              <FlaskConical size={18} className="text-white" />
+            </div>
+            <div>
+              <h2 className="font-bold text-base" style={{ color: 'var(--color-text)' }}>
+                A/B Testing de carritos
+              </h2>
+              <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                Prueba diferentes mensajes de recuperacion para optimizar conversion
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => setShowAbForm(!showAbForm)}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold gradient-bg text-white"
+            style={{ border: 'none', cursor: 'pointer' }}
+          >
+            <Plus size={14} /> Nuevo test
+          </button>
+        </div>
+
+        {showAbForm && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            className="mb-6 p-4 rounded-xl"
+            style={{ background: 'var(--color-muted)', border: '1.5px solid var(--color-border)' }}
+          >
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold mb-1" style={{ color: 'var(--color-text)' }}>
+                  Nombre del test
+                </label>
+                <input
+                  value={abForm.nombre}
+                  onChange={(e) => setAbForm({ ...abForm, nombre: e.target.value })}
+                  placeholder="ej: Tono casual vs urgente"
+                  className="w-full px-3 py-2 rounded-lg text-sm"
+                  style={{ border: '1.5px solid var(--color-border)', outline: 'none' }}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold mb-1" style={{ color: 'var(--color-text)' }}>
+                    Variante A (template)
+                  </label>
+                  <textarea
+                    value={abForm.variante_a}
+                    onChange={(e) => setAbForm({ ...abForm, variante_a: e.target.value })}
+                    placeholder="Usa {nombre}, {productos}, {total}, {total_str}, {url_carrito}"
+                    rows={4}
+                    className="w-full px-3 py-2 rounded-lg text-sm"
+                    style={{ border: '1.5px solid var(--color-border)', outline: 'none', resize: 'vertical' }}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1" style={{ color: 'var(--color-text)' }}>
+                    Variante B (template)
+                  </label>
+                  <textarea
+                    value={abForm.variante_b}
+                    onChange={(e) => setAbForm({ ...abForm, variante_b: e.target.value })}
+                    placeholder="Usa {nombre}, {productos}, {total}, {total_str}, {url_carrito}"
+                    rows={4}
+                    className="w-full px-3 py-2 rounded-lg text-sm"
+                    style={{ border: '1.5px solid var(--color-border)', outline: 'none', resize: 'vertical' }}
+                  />
+                </div>
+              </div>
+              <div className="flex gap-2 justify-end">
+                <button
+                  onClick={() => setShowAbForm(false)}
+                  className="px-4 py-2 rounded-lg text-sm"
+                  style={{ border: '1.5px solid var(--color-border)', background: 'white', cursor: 'pointer' }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={crearAbTest}
+                  className="px-4 py-2 rounded-lg text-sm font-semibold gradient-bg text-white"
+                  style={{ border: 'none', cursor: 'pointer' }}
+                >
+                  Crear test
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
+        {abLoading ? (
+          <div className="flex items-center justify-center py-8">
+            <div className="w-6 h-6 rounded-full border-2 border-purple-200 border-t-purple-600 animate-spin" />
+          </div>
+        ) : abTests.length === 0 ? (
+          <div className="text-center py-8">
+            <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
+              No hay tests A/B creados. Crea uno para probar diferentes mensajes de carrito abandonado.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {abTests.map((test) => {
+              const rateA = test.variantes.a.envios > 0
+                ? Math.round((test.variantes.a.conversiones / test.variantes.a.envios) * 100)
+                : 0
+              const rateB = test.variantes.b.envios > 0
+                ? Math.round((test.variantes.b.conversiones / test.variantes.b.envios) * 100)
+                : 0
+              return (
+                <div
+                  key={test.id}
+                  className="p-4 rounded-xl"
+                  style={{
+                    background: 'var(--color-muted)',
+                    borderLeft: test.activo ? '4px solid #764ba2' : '4px solid #d1d5db',
+                  }}
+                >
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-sm" style={{ color: 'var(--color-text)' }}>
+                        {test.nombre}
+                      </span>
+                      <span
+                        className="text-xs px-2 py-0.5 rounded-full font-medium"
+                        style={{
+                          background: test.activo ? '#d1fae5' : '#f3f4f6',
+                          color: test.activo ? '#065f46' : '#6b7280',
+                        }}
+                      >
+                        {test.activo ? 'Activo' : 'Pausado'}
+                      </span>
+                      {!test.significancia && test.total_envios > 0 && (
+                        <span className="text-xs px-2 py-0.5 rounded-full font-medium"
+                          style={{ background: '#fef3c7', color: '#92400e' }}>
+                          &lt;100 envios
+                        </span>
+                      )}
+                    </div>
+                    {test.activo && (
+                      <button
+                        onClick={() => pausarAbTest(test.id)}
+                        className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium"
+                        style={{ background: '#fee2e2', color: '#dc2626', border: 'none', cursor: 'pointer' }}
+                      >
+                        <Pause size={12} /> Pausar
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="p-3 rounded-lg" style={{ background: 'white' }}>
+                      <p className="text-xs font-semibold mb-1" style={{ color: '#764ba2' }}>Variante A</p>
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-2xl font-black" style={{ color: 'var(--color-text)' }}>{rateA}%</span>
+                        <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                          ({test.variantes.a.conversiones}/{test.variantes.a.envios})
+                        </span>
+                      </div>
+                    </div>
+                    <div className="p-3 rounded-lg" style={{ background: 'white' }}>
+                      <p className="text-xs font-semibold mb-1" style={{ color: '#e879f9' }}>Variante B</p>
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-2xl font-black" style={{ color: 'var(--color-text)' }}>{rateB}%</span>
+                        <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                          ({test.variantes.b.conversiones}/{test.variantes.b.envios})
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </motion.div>
     </div>
   )
 }

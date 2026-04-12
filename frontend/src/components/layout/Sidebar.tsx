@@ -10,6 +10,7 @@ import {
   BookOpen,
   Sparkles,
   Settings,
+  AlertTriangle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -18,6 +19,7 @@ const nav = [
   { href: '/carritos',       icon: ShoppingCart,    label: 'Carritos'        },
   { href: '/conversaciones', icon: MessageSquare,   label: 'Conversaciones'  },
   { href: '/knowledge',      icon: BookOpen,        label: 'Knowledge Base'  },
+  { href: '/escalaciones',   icon: AlertTriangle,   label: 'Escalaciones'    },
   { href: '/analisis',       icon: Sparkles,        label: 'Análisis con IA' },
   { href: '/configuracion',  icon: Settings,        label: 'Configuración'   },
 ]

@@ -103,3 +103,47 @@ class ProveedorTwilio(ProveedorWhatsApp):
                 return False
             logger.info(f"Mensaje enviado via Twilio a {to_number}")
             return True
+
+    async def enviar_mensaje_interactivo(
+        self, telefono: str, cuerpo: str, productos: list[dict],
+    ) -> bool:
+        """
+        Envía productos usando Twilio Content Templates (ContentSid) si está configurado.
+        Fallback: texto formateado con productos.
+
+        Para usar templates interactivos:
+        1. Crear template tipo list-picker en Twilio Content Editor
+        2. Esperar aprobacion de Meta (24-48h primera vez)
+        3. Configurar TWILIO_CATALOGO_CONTENT_SID en .env
+        """
+        content_sid = os.getenv("TWILIO_CATALOGO_CONTENT_SID", "")
+
+        if content_sid and self.account_sid and self.auth_token:
+            to_number = telefono if telefono.startswith("whatsapp:") else f"whatsapp:{telefono}"
+            from_number = self.from_number if self.from_number.startswith("whatsapp:") else f"whatsapp:{self.from_number}"
+
+            # Construir variables para el template
+            import json
+            variables = {}
+            for i, p in enumerate(productos[:10]):
+                variables[f"{i+1}"] = p.get("titulo", "Producto")
+            content_variables = json.dumps(variables)
+
+            headers = {"Authorization": self._auth_header()}
+            try:
+                async with httpx.AsyncClient() as client:
+                    r = await client.post(self.url_envio, data={
+                        "From": from_number,
+                        "To": to_number,
+                        "ContentSid": content_sid,
+                        "ContentVariables": content_variables,
+                    }, headers=headers)
+                    if r.status_code in (200, 201):
+                        logger.info(f"Mensaje interactivo enviado via Twilio a {to_number}")
+                        return True
+                    logger.warning(f"Template interactivo falló ({r.status_code}), usando texto fallback")
+            except Exception as e:
+                logger.warning(f"Error enviando interactivo: {e}, usando texto fallback")
+
+        # Fallback: texto formateado
+        return await self.enviar_mensaje(telefono, cuerpo)

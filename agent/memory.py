@@ -1,9 +1,18 @@
 import os
+import json
+import hashlib
+import logging
 from datetime import datetime, timedelta
+from enum import Enum
+from typing import Optional
+
+from pydantic import BaseModel, field_validator
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy import String, Text, DateTime, select, Integer, Boolean, func, update
+from sqlalchemy import String, Text, DateTime, Index, select, Integer, Boolean, Float, func, update
 from dotenv import load_dotenv
+
+logger = logging.getLogger("agentkit")
 
 load_dotenv()
 
@@ -67,6 +76,92 @@ class Conversion(Base):
     fuente: Mapped[str] = mapped_column(String(20), default="chat")
     dias_desde_chat: Mapped[int] = mapped_column(Integer, default=0)
     timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+# ── Funnel Analytics ──────────────────────────────────────
+
+class TipoEventoFunnel(str, Enum):
+    MENSAJE_RECIBIDO = "mensaje_recibido"
+    PRODUCTO_CONSULTADO = "producto_consultado"
+    CARRITO_CREADO = "carrito_creado"
+    COMPRA_REALIZADA = "compra_realizada"
+
+
+class MetadataEvento(BaseModel):
+    """Validacion Pydantic para metadata de eventos del funnel."""
+    query: Optional[str] = None
+    productos: Optional[list[str]] = None
+    total: Optional[str] = None
+    order_id: Optional[str] = None
+    checkout_id: Optional[str] = None
+    fuente: Optional[str] = None
+
+    @field_validator("query")
+    @classmethod
+    def query_not_empty(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not v.strip():
+            return None
+        return v
+
+
+class EventoFunnel(Base):
+    """Evento del funnel de conversion: mensaje → producto → carrito → compra."""
+    __tablename__ = "eventos_funnel"
+    __table_args__ = (
+        Index("ix_funnel_tipo_timestamp", "tipo_evento", "timestamp"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    telefono: Mapped[str] = mapped_column(String(50), index=True)
+    tipo_evento: Mapped[str] = mapped_column(String(30))
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+# ── Escalaciones ─────────────────────────────────────────
+
+class Escalacion(Base):
+    """Escalada de conversacion a un humano del equipo."""
+    __tablename__ = "escalaciones"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    telefono: Mapped[str] = mapped_column(String(50), index=True)
+    razon: Mapped[str] = mapped_column(Text, default="")
+    resumen: Mapped[str] = mapped_column(Text, default="")
+    estado: Mapped[str] = mapped_column(String(20), default="pendiente")  # pendiente, resuelta
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+# ── A/B Testing ──────────────────────────────────────────
+
+class TestAB(Base):
+    """Test A/B para mensajes de carrito abandonado."""
+    __tablename__ = "tests_ab"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    nombre: Mapped[str] = mapped_column(String(100))
+    variante_a: Mapped[str] = mapped_column(Text)
+    variante_b: Mapped[str] = mapped_column(Text)
+    activo: Mapped[bool] = mapped_column(Boolean, default=True)
+    fecha_inicio: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class AsignacionAB(Base):
+    """Asignacion deterministica de variante A/B por telefono."""
+    __tablename__ = "asignaciones_ab"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    telefono: Mapped[str] = mapped_column(String(50), index=True)
+    test_id: Mapped[int] = mapped_column(Integer, index=True)
+    variante: Mapped[str] = mapped_column(String(1))  # "a" o "b"
+    resultado: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # null, "converted"
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+def asignar_variante_ab(telefono: str, test_id: int) -> str:
+    """Asignacion deterministica: hash(telefono + test_id) % 2."""
+    h = hashlib.md5(f"{telefono}-{test_id}".encode()).hexdigest()
+    return "a" if int(h, 16) % 2 == 0 else "b"
 
 
 async def inicializar_db():
@@ -230,3 +325,230 @@ async def limpiar_historial(telefono: str):
         for m in result.scalars().all():
             await session.delete(m)
         await session.commit()
+
+
+# ── Funnel Analytics functions ────────────────────────────
+
+async def registrar_evento_funnel(
+    telefono: str,
+    tipo_evento: TipoEventoFunnel,
+    metadata: MetadataEvento | None = None,
+):
+    """Registra un evento en el funnel de conversion con validacion Pydantic."""
+    meta_json = metadata.model_dump_json(exclude_none=True) if metadata else "{}"
+    async with async_session() as session:
+        session.add(EventoFunnel(
+            telefono=telefono,
+            tipo_evento=tipo_evento.value,
+            metadata_json=meta_json,
+        ))
+        await session.commit()
+
+
+async def obtener_funnel(fecha_inicio: datetime, fecha_fin: datetime) -> dict:
+    """
+    Retorna conteos del funnel agrupados por tipo de evento.
+    Usa el indice compuesto (tipo_evento, timestamp).
+    """
+    async with async_session() as session:
+        result = await session.execute(
+            select(EventoFunnel.tipo_evento, func.count(EventoFunnel.id))
+            .where(EventoFunnel.timestamp >= fecha_inicio)
+            .where(EventoFunnel.timestamp <= fecha_fin)
+            .group_by(EventoFunnel.tipo_evento)
+        )
+        conteos = {row[0]: row[1] for row in result.all()}
+
+    # Calcular valor total de compras
+    valor_total = 0.0
+    if conteos.get(TipoEventoFunnel.COMPRA_REALIZADA.value, 0) > 0:
+        async with async_session() as session:
+            result = await session.execute(
+                select(EventoFunnel.metadata_json)
+                .where(EventoFunnel.tipo_evento == TipoEventoFunnel.COMPRA_REALIZADA.value)
+                .where(EventoFunnel.timestamp >= fecha_inicio)
+                .where(EventoFunnel.timestamp <= fecha_fin)
+            )
+            for (meta_str,) in result.all():
+                try:
+                    meta = json.loads(meta_str)
+                    total_str = meta.get("total", "0")
+                    valor = float(
+                        total_str.replace("$", "").replace(".", "").replace(",", ".").split()[0]
+                    )
+                    valor_total += valor
+                except (ValueError, IndexError, AttributeError):
+                    pass
+
+    # Clientas unicas por paso
+    async with async_session() as session:
+        result = await session.execute(
+            select(EventoFunnel.tipo_evento, func.count(func.distinct(EventoFunnel.telefono)))
+            .where(EventoFunnel.timestamp >= fecha_inicio)
+            .where(EventoFunnel.timestamp <= fecha_fin)
+            .group_by(EventoFunnel.tipo_evento)
+        )
+        clientas_unicas = {row[0]: row[1] for row in result.all()}
+
+    orden = [e.value for e in TipoEventoFunnel]
+    return {
+        "periodo": {
+            "inicio": fecha_inicio.isoformat(),
+            "fin": fecha_fin.isoformat(),
+        },
+        "funnel": [
+            {
+                "paso": paso,
+                "eventos": conteos.get(paso, 0),
+                "clientas_unicas": clientas_unicas.get(paso, 0),
+            }
+            for paso in orden
+        ],
+        "valor_total_compras": valor_total,
+    }
+
+
+# ── Escalaciones functions ────────────────────────────────
+
+async def crear_escalacion(telefono: str, razon: str, resumen: str) -> Escalacion | None:
+    """
+    Crea una escalacion con debounce: solo 1 por telefono cada 30 minutos.
+    Retorna la escalacion creada o None si hay una reciente.
+    """
+    limite = datetime.utcnow() - timedelta(minutes=30)
+    async with async_session() as session:
+        result = await session.execute(
+            select(Escalacion)
+            .where(Escalacion.telefono == telefono)
+            .where(Escalacion.estado == "pendiente")
+            .where(Escalacion.timestamp >= limite)
+        )
+        if result.scalar_one_or_none():
+            logger.info(f"Escalacion duplicada ignorada para {telefono} (debounce 30min)")
+            return None
+
+        escalacion = Escalacion(
+            telefono=telefono,
+            razon=razon,
+            resumen=resumen,
+        )
+        session.add(escalacion)
+        await session.commit()
+        await session.refresh(escalacion)
+        return escalacion
+
+
+async def obtener_escalaciones(estado: str | None = None) -> list:
+    """Retorna escalaciones, opcionalmente filtradas por estado."""
+    async with async_session() as session:
+        query = select(Escalacion).order_by(Escalacion.timestamp.desc())
+        if estado:
+            query = query.where(Escalacion.estado == estado)
+        result = await session.execute(query)
+        return result.scalars().all()
+
+
+async def resolver_escalacion(escalacion_id: int) -> bool:
+    """Marca una escalacion como resuelta."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(Escalacion).where(Escalacion.id == escalacion_id)
+        )
+        esc = result.scalar_one_or_none()
+        if not esc:
+            return False
+        esc.estado = "resuelta"
+        await session.commit()
+        return True
+
+
+# ── A/B Testing CRUD ─────────────────────────────────────
+
+async def obtener_test_ab_activo() -> TestAB | None:
+    """Retorna el test A/B activo (solo 1 a la vez)."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(TestAB).where(TestAB.activo == True).limit(1)
+        )
+        return result.scalar_one_or_none()
+
+
+async def obtener_tests_ab() -> list:
+    """Retorna todos los tests A/B ordenados por fecha."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(TestAB).order_by(TestAB.fecha_inicio.desc())
+        )
+        return list(result.scalars().all())
+
+
+async def crear_test_ab(nombre: str, variante_a: str, variante_b: str) -> TestAB:
+    """Crea un test A/B. Desactiva cualquier test activo previo."""
+    async with async_session() as session:
+        # Desactivar tests activos
+        await session.execute(
+            update(TestAB).where(TestAB.activo == True).values(activo=False)
+        )
+        test = TestAB(nombre=nombre, variante_a=variante_a, variante_b=variante_b)
+        session.add(test)
+        await session.commit()
+        await session.refresh(test)
+        return test
+
+
+async def pausar_test_ab(test_id: int) -> bool:
+    """Pausa (desactiva) un test A/B."""
+    async with async_session() as session:
+        result = await session.execute(select(TestAB).where(TestAB.id == test_id))
+        test = result.scalar_one_or_none()
+        if not test:
+            return False
+        test.activo = False
+        await session.commit()
+        return True
+
+
+async def registrar_asignacion_ab(telefono: str, test_id: int, variante: str):
+    """Guarda la asignacion de variante para un telefono."""
+    async with async_session() as session:
+        session.add(AsignacionAB(telefono=telefono, test_id=test_id, variante=variante))
+        await session.commit()
+
+
+async def marcar_conversion_ab(telefono: str):
+    """Marca como convertida la ultima asignacion A/B de un telefono."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(AsignacionAB)
+            .where(AsignacionAB.telefono == telefono, AsignacionAB.resultado == None)
+            .order_by(AsignacionAB.timestamp.desc())
+            .limit(1)
+        )
+        asig = result.scalar_one_or_none()
+        if asig:
+            asig.resultado = "converted"
+            await session.commit()
+
+
+async def obtener_resultados_ab(test_id: int) -> dict:
+    """Retorna resultados del test A/B: envios y conversiones por variante."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(AsignacionAB).where(AsignacionAB.test_id == test_id)
+        )
+        asignaciones = list(result.scalars().all())
+
+    stats = {"a": {"envios": 0, "conversiones": 0}, "b": {"envios": 0, "conversiones": 0}}
+    for a in asignaciones:
+        if a.variante in stats:
+            stats[a.variante]["envios"] += 1
+            if a.resultado == "converted":
+                stats[a.variante]["conversiones"] += 1
+
+    total = stats["a"]["envios"] + stats["b"]["envios"]
+    return {
+        "test_id": test_id,
+        "total_envios": total,
+        "significancia": total >= 100,
+        "variantes": stats,
+    }

@@ -62,6 +62,21 @@ TOOLS = [
         },
     },
     {
+        "name": "consultar_pedido",
+        "description": (
+            "Consulta el estado de los pedidos de la clienta en Shopify. "
+            "Úsala cuando la clienta pregunte por su pedido, envío, tracking, "
+            "o 'dónde está mi pedido'. Busca automáticamente por el teléfono "
+            "de la conversación actual. Retorna los últimos 3 pedidos con "
+            "estado de pago, envío y número de seguimiento."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
         "name": "escalate_to_human",
         "description": (
             "Transfiere la conversación a una asesora humana de PRAIE. "
@@ -139,12 +154,19 @@ def obtener_mensaje_fallback() -> str:
     return _cargar_prompts().get("fallback_message", "Disculpa, no entendí tu mensaje. ¿Puedes reformularlo?")
 
 
-async def _ejecutar_herramienta(nombre: str, parametros: dict) -> str:
+async def _ejecutar_herramienta(nombre: str, parametros: dict, telefono: str = "") -> str:
     if nombre == "buscar_productos":
         from agent.shopify import buscar_productos_shopify
+        from agent.memory import registrar_evento_funnel, TipoEventoFunnel, MetadataEvento
         query = parametros.get("query", "")
         limit = parametros.get("limit", 2)
         productos = await buscar_productos_shopify(query, limit)
+        # Funnel: registrar consulta de producto
+        if telefono:
+            await registrar_evento_funnel(
+                telefono, TipoEventoFunnel.PRODUCTO_CONSULTADO,
+                MetadataEvento(query=query, productos=[p["titulo"] for p in productos[:5]]),
+            )
         if not productos:
             return "No encontré productos que coincidan con esa búsqueda en este momento."
         lineas = []
@@ -174,17 +196,66 @@ async def _ejecutar_herramienta(nombre: str, parametros: dict) -> str:
                 f"  Link: {p['url']}"
             )
         return "\n\n".join(lineas)
+    if nombre == "consultar_pedido":
+        from agent.shopify import consultar_pedido_shopify
+        if not telefono:
+            return "No tengo el número de teléfono de esta conversación para buscar pedidos."
+        pedidos = await consultar_pedido_shopify(telefono)
+        if not pedidos:
+            return (
+                "No encontré pedidos asociados a este número de teléfono. "
+                "Pídele a la clienta su número de pedido o email para buscarlo de otra forma."
+            )
+        lineas = []
+        for p in pedidos:
+            tracking_str = ""
+            if p["tracking_number"]:
+                tracking_str = f"\n  Tracking: {p['tracking_number']}"
+                if p["tracking_url"]:
+                    tracking_str += f"\n  Rastrear aquí: {p['tracking_url']}"
+            elif p["estado_envio"] == "Enviado":
+                tracking_str = "\n  (Sin número de seguimiento aún)"
+            lineas.append(
+                f"• Pedido {p['nombre_pedido']} ({p['fecha']})\n"
+                f"  Productos: {p['productos']}\n"
+                f"  Total: {p['total']}\n"
+                f"  Pago: {p['estado_pago']}\n"
+                f"  Envío: {p['estado_envio']}"
+                f"{tracking_str}"
+            )
+        return "\n\n".join(lineas)
     if nombre == "escalate_to_human":
+        from agent.memory import crear_escalacion, obtener_historial
         motivo = parametros.get("motivo", "motivo no especificado")
         resumen = parametros.get("resumen", "")
         logger.warning(f"ESCALAMIENTO A HUMANO — motivo: {motivo} | resumen: {resumen}")
-        # Aquí se puede agregar integración con CRM, Slack, email, etc.
-        # Por ahora registra el evento en logs para que el equipo lo vea
+        if telefono:
+            esc = await crear_escalacion(telefono, motivo, resumen)
+            if esc is None:
+                return "ESCALAMIENTO_YA_REGISTRADO"
+            # Notificar al grupo de WhatsApp del equipo si está configurado
+            grupo_wa = os.getenv("EQUIPO_WA_GRUPO", "")
+            if grupo_wa:
+                try:
+                    from agent.providers import obtener_proveedor
+                    proveedor = obtener_proveedor()
+                    historial = await obtener_historial(telefono, limite=5)
+                    contexto = "\n".join(f"- {m['role']}: {m['content'][:100]}" for m in historial[-3:])
+                    notif = (
+                        f"🚨 *Escalación #{esc.id}*\n"
+                        f"📱 {telefono}\n"
+                        f"📝 {motivo}\n"
+                        f"💬 Resumen: {resumen}\n\n"
+                        f"Últimos mensajes:\n{contexto}"
+                    )
+                    await proveedor.enviar_mensaje(grupo_wa, notif)
+                except Exception as e:
+                    logger.error(f"Error notificando escalación al grupo: {e}")
         return "ESCALAMIENTO_REGISTRADO"
     return f"Herramienta '{nombre}' no reconocida."
 
 
-async def generar_respuesta(mensaje: str, historial: list[dict]) -> str:
+async def generar_respuesta(mensaje: str, historial: list[dict], telefono: str = "") -> str:
     if not mensaje or len(mensaje.strip()) < 2:
         return obtener_mensaje_fallback()
 
@@ -216,7 +287,7 @@ async def generar_respuesta(mensaje: str, historial: list[dict]) -> str:
                 for bloque in response.content:
                     if bloque.type == "tool_use":
                         logger.info(f"Tool call: {bloque.name}({bloque.input})")
-                        resultado = await _ejecutar_herramienta(bloque.name, bloque.input)
+                        resultado = await _ejecutar_herramienta(bloque.name, bloque.input, telefono)
                         resultados.append({
                             "type": "tool_result",
                             "tool_use_id": bloque.id,

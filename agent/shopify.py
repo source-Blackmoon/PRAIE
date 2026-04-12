@@ -568,6 +568,141 @@ async def buscar_ofertas_shopify(limit: int = 3) -> list[dict]:
     return []
 
 
+GRAPHQL_CONSULTAR_PEDIDOS = """
+query ConsultarPedidos($query: String!) {
+  orders(first: 3, query: $query, sortKey: CREATED_AT, reverse: true) {
+    edges {
+      node {
+        name
+        createdAt
+        displayFinancialStatus
+        displayFulfillmentStatus
+        totalPriceSet {
+          shopMoney { amount currencyCode }
+        }
+        fulfillments(first: 1) {
+          trackingInfo(first: 1) {
+            number
+            url
+          }
+          status
+        }
+        lineItems(first: 5) {
+          edges {
+            node { title quantity }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+_STATUS_FINANCIERO = {
+    "PAID": "Pagado",
+    "PENDING": "Pendiente de pago",
+    "PARTIALLY_PAID": "Parcialmente pagado",
+    "REFUNDED": "Reembolsado",
+    "PARTIALLY_REFUNDED": "Parcialmente reembolsado",
+    "VOIDED": "Anulado",
+    "AUTHORIZED": "Autorizado",
+}
+
+_STATUS_ENVIO = {
+    "FULFILLED": "Enviado",
+    "UNFULFILLED": "En preparación",
+    "PARTIALLY_FULFILLED": "Parcialmente enviado",
+    "IN_PROGRESS": "En proceso",
+    "ON_HOLD": "En espera",
+    "SCHEDULED": "Programado",
+}
+
+
+async def consultar_pedido_shopify(telefono: str) -> list[dict]:
+    """
+    Consulta los últimos pedidos de una clienta por teléfono.
+    Retorna lista con nombre del pedido, estado, tracking, productos.
+    """
+    if not SHOPIFY_ACCESS_TOKEN or SHOPIFY_ACCESS_TOKEN.startswith("REEMPLAZAR"):
+        logger.warning("SHOPIFY_ACCESS_TOKEN no configurado")
+        return []
+
+    from agent.utils import normalizar_telefono_e164
+    telefono_e164 = normalizar_telefono_e164(telefono)
+    if not telefono_e164:
+        return []
+
+    url = f"{_base_url()}/graphql.json"
+    payload = {
+        "query": GRAPHQL_CONSULTAR_PEDIDOS,
+        "variables": {"query": f"phone:{telefono_e164}"},
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.post(url, json=payload, headers=_headers())
+            if r.status_code != 200:
+                logger.error(f"Shopify pedidos {r.status_code}: {r.text[:200]}")
+                return []
+
+            data = r.json()
+            if "errors" in data and not data.get("data"):
+                logger.error(f"Shopify GraphQL error pedidos: {data['errors']}")
+                return []
+
+            edges = data.get("data", {}).get("orders", {}).get("edges", [])
+            resultado = []
+
+            for edge in edges:
+                node = edge["node"]
+                items = [e["node"] for e in node.get("lineItems", {}).get("edges", [])]
+                productos = ", ".join(
+                    f"{it.get('title', 'producto')} (x{it.get('quantity', 1)})"
+                    for it in items[:3]
+                )
+
+                precio = node.get("totalPriceSet", {}).get("shopMoney", {})
+                total = _formatear_total(precio.get("amount", ""))
+
+                # Tracking
+                tracking_number = ""
+                tracking_url = ""
+                fulfillments = node.get("fulfillments", [])
+                if fulfillments:
+                    tracking_info = fulfillments[0].get("trackingInfo", [])
+                    if tracking_info:
+                        tracking_number = tracking_info[0].get("number", "")
+                        tracking_url = tracking_info[0].get("url", "")
+
+                estado_financiero = _STATUS_FINANCIERO.get(
+                    node.get("displayFinancialStatus", ""), node.get("displayFinancialStatus", "")
+                )
+                estado_envio = _STATUS_ENVIO.get(
+                    node.get("displayFulfillmentStatus", ""), node.get("displayFulfillmentStatus", "")
+                )
+
+                resultado.append({
+                    "nombre_pedido": node.get("name", ""),
+                    "fecha": node.get("createdAt", "")[:10],
+                    "estado_pago": estado_financiero,
+                    "estado_envio": estado_envio,
+                    "total": total,
+                    "productos": productos,
+                    "tracking_number": tracking_number,
+                    "tracking_url": tracking_url,
+                })
+
+            logger.info(f"Pedidos encontrados para {telefono_e164}: {len(resultado)}")
+            return resultado
+
+    except httpx.TimeoutException:
+        logger.error("Timeout consultando pedidos en Shopify")
+        return []
+    except Exception as e:
+        logger.error(f"Error consultando pedidos: {e}")
+        return []
+
+
 async def verificar_credenciales() -> dict:
     """Verifica que el token de Shopify sea válido consultando la tienda."""
     if not SHOPIFY_ACCESS_TOKEN or SHOPIFY_ACCESS_TOKEN.startswith("REEMPLAZAR"):
