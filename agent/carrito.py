@@ -46,8 +46,9 @@ TEMPLATE_CARRITO_DEFAULT = (
 def verificar_shopify_hmac(body: bytes, hmac_header: str) -> bool:
     if not SHOPIFY_SECRET:
         if os.getenv("ENVIRONMENT", "development") == "production":
-            logger.warning("SHOPIFY_WEBHOOK_SECRET no configurado — verificación HMAC desactivada en producción")
-        return True  # Sin secret configurado → aceptar en desarrollo
+            logger.error("SHOPIFY_WEBHOOK_SECRET no configurado en produccion — rechazando webhook")
+            return False
+        return True  # Sin secret en desarrollo → aceptar
     digest = hmac.new(
         SHOPIFY_SECRET.encode("utf-8"), body, hashlib.sha256
     ).digest()
@@ -136,10 +137,10 @@ async def recibir_checkout(request: Request):
     """Endpoint POST /shopify/checkout — recibe checkouts de Shopify."""
     body = await request.body()
 
-    # Verificar HMAC solo en producción
+    # Verificar HMAC siempre que el secret este configurado
     hmac_header = request.headers.get("X-Shopify-Hmac-Sha256", "")
-    environment = os.getenv("ENVIRONMENT", "development")
-    if SHOPIFY_SECRET and environment == "production" and not verificar_shopify_hmac(body, hmac_header):
+    if SHOPIFY_SECRET and not verificar_shopify_hmac(body, hmac_header):
+        logger.warning("Shopify webhook con HMAC invalido rechazado (checkout)")
         raise HTTPException(status_code=401, detail="HMAC inválido")
 
     payload = await request.json() if not body else __import__("json").loads(body)
@@ -162,8 +163,8 @@ async def recibir_orden_completada(request: Request):
     """Endpoint POST /shopify/orden — marca checkout como completado y registra conversión."""
     body = await request.body()
     hmac_header = request.headers.get("X-Shopify-Hmac-Sha256", "")
-    environment = os.getenv("ENVIRONMENT", "development")
-    if SHOPIFY_SECRET and environment == "production" and not verificar_shopify_hmac(body, hmac_header):
+    if SHOPIFY_SECRET and not verificar_shopify_hmac(body, hmac_header):
+        logger.warning("Shopify webhook con HMAC invalido rechazado (orden)")
         raise HTTPException(status_code=401, detail="HMAC inválido")
 
     payload = __import__("json").loads(body)

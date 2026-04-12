@@ -57,8 +57,18 @@ class ProveedorTwilio(ProveedorWhatsApp):
         form = await request.form()
         params = dict(form)
 
-        # Validación de firma desactivada en sandbox
-        # (Railway usa URL interna que no coincide con la URL pública que Twilio firma)
+        # Validar firma de Twilio si auth_token esta configurado
+        if self.auth_token:
+            firma = request.headers.get("X-Twilio-Signature", "")
+            # Usar WEBHOOK_BASE_URL si Railway/proxy cambia la URL interna
+            base_url = os.getenv("WEBHOOK_BASE_URL", "")
+            if base_url:
+                url = f"{base_url.rstrip('/')}/webhook"
+            else:
+                url = str(request.url)
+            if not self._validar_firma(url, params, firma):
+                logger.warning(f"Firma Twilio invalida — posible webhook falso")
+                return []  # Rechazar silenciosamente
 
         texto = params.get("Body", "").strip()
         from_raw = params.get("From", "")

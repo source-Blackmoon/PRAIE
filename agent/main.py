@@ -1,4 +1,5 @@
 import os
+import hmac as hmac_mod
 import asyncio
 import logging
 from collections import defaultdict
@@ -8,6 +9,9 @@ from pathlib import Path
 from fastapi import FastAPI, Request, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from dotenv import load_dotenv
 
 from agent.brain import generar_respuesta
@@ -42,10 +46,11 @@ API_KEY = os.getenv("API_KEY", "")
 def verificar_api_key(x_api_key: str = Header(default="")):
     """Protege los endpoints de administración con una API key."""
     if not API_KEY:
-        if ENVIRONMENT == "production":
-            raise HTTPException(status_code=500, detail="API_KEY no configurada en producción")
-        return  # En desarrollo se acepta sin key
-    if x_api_key != API_KEY:
+        raise HTTPException(
+            status_code=500,
+            detail="API_KEY no configurada — configura API_KEY en .env",
+        )
+    if not hmac_mod.compare_digest(x_api_key, API_KEY):
         raise HTTPException(status_code=401, detail="API key inválida")
 
 logging.basicConfig(level=logging.DEBUG if ENVIRONMENT == "development" else logging.INFO)
@@ -82,6 +87,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Agente WhatsApp PRAIE — Laura", version="1.0.0", lifespan=lifespan)
 
+# ── Rate Limiting ─────────────────────────────────────────
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 CORS_ORIGINS = [
     "http://localhost:4001",
     "http://localhost:4000",
@@ -107,6 +117,7 @@ async def health_check():
 
 # ── WhatsApp webhook ───────────────────────────────────────
 @app.get("/webhook")
+@limiter.limit("10/minute")
 async def webhook_verificacion(request: Request):
     resultado = await proveedor.validar_webhook(request)
     if resultado is not None:
@@ -132,6 +143,7 @@ async def _procesar_mensaje(telefono: str, texto: str, historial: list):
 
 
 @app.post("/webhook")
+@limiter.limit("30/minute")
 async def webhook_handler(request: Request):
     if not AUTO_RESPONDER:
         logger.debug("Auto-respuesta desactivada — mensaje ignorado")
@@ -149,7 +161,8 @@ async def webhook_handler(request: Request):
         return {"status": "ok"}
     except Exception as e:
         logger.error(f"Error en webhook: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        detail = str(e) if ENVIRONMENT == "development" else "Error interno del servidor"
+        raise HTTPException(status_code=500, detail=detail)
 
 
 # ── Shopify OAuth ─────────────────────────────────────────
@@ -160,7 +173,8 @@ SHOPIFY_REDIRECT_URI = "https://praie-production.up.railway.app/shopify/oauth/ca
 
 
 @app.get("/shopify/oauth/install")
-async def shopify_oauth_install(shop: str = "f0315f.myshopify.com"):
+@limiter.limit("5/minute")
+async def shopify_oauth_install(request: Request, shop: str = "f0315f.myshopify.com"):
     """Inicia el flujo OAuth — abre esto en el browser para obtener un token nuevo."""
     from fastapi.responses import RedirectResponse
     url = (
@@ -174,7 +188,8 @@ async def shopify_oauth_install(shop: str = "f0315f.myshopify.com"):
 
 
 @app.get("/shopify/oauth/callback")
-async def shopify_oauth_callback(code: str, shop: str, state: str = ""):
+@limiter.limit("5/minute")
+async def shopify_oauth_callback(request: Request, code: str, shop: str, state: str = ""):
     """Recibe el código OAuth y lo intercambia por un access token."""
     import httpx
     async with httpx.AsyncClient(timeout=10.0) as client:
@@ -189,10 +204,18 @@ async def shopify_oauth_callback(code: str, shop: str, state: str = ""):
     data = r.json()
     token = data.get("access_token", "")
     scope = data.get("scope", "")
-    logger.info(f"OAuth Shopify — nuevo token obtenido, scopes: {scope}")
+    if not token:
+        logger.error(f"OAuth Shopify — no se obtuvo token: {data}")
+        raise HTTPException(status_code=400, detail="No se pudo obtener el token de Shopify")
+    # Guardar token en DB en lugar de exponerlo en la respuesta HTTP
+    from agent.memory import guardar_config
+    await guardar_config("shopify_access_token", token)
+    token_preview = f"{token[:8]}...{token[-4:]}" if len(token) > 12 else "****"
+    logger.info(f"OAuth Shopify — token guardado en DB, scopes: {scope}")
     return {
-        "instruccion": "Copia este token en Railway como SHOPIFY_ACCESS_TOKEN",
-        "access_token": token,
+        "status": "ok",
+        "instruccion": "Token guardado automaticamente en la base de datos. Para Railway, configura SHOPIFY_ACCESS_TOKEN manualmente.",
+        "token_preview": token_preview,
         "scope": scope,
         "shop": shop,
     }
@@ -200,11 +223,13 @@ async def shopify_oauth_callback(code: str, shop: str, state: str = ""):
 
 # ── Shopify webhooks ───────────────────────────────────────
 @app.post("/shopify/checkout")
+@limiter.limit("20/minute")
 async def shopify_checkout(request: Request):
     return await recibir_checkout(request)
 
 
 @app.post("/shopify/orden")
+@limiter.limit("20/minute")
 async def shopify_orden(request: Request):
     return await recibir_orden_completada(request)
 
