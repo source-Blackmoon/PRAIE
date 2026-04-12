@@ -580,8 +580,9 @@ query ConsultarPedidos($query: String!) {
         totalPriceSet {
           shopMoney { amount currencyCode }
         }
-        fulfillments(first: 1) {
-          trackingInfo(first: 1) {
+        fulfillments(first: 5) {
+          trackingInfo(first: 5) {
+            company
             number
             url
           }
@@ -616,6 +617,25 @@ _STATUS_ENVIO = {
     "ON_HOLD": "En espera",
     "SCHEDULED": "Programado",
 }
+
+
+def _extraer_tracking(fulfillments: list[dict]) -> list[dict]:
+    """Extrae todas las entradas de tracking de los fulfillments de un pedido."""
+    entries = []
+    for ful in fulfillments:
+        status = ful.get("status", "")
+        for info in ful.get("trackingInfo", []):
+            company = info.get("company", "")
+            number = info.get("number", "")
+            url = info.get("url", "")
+            if number or company:
+                entries.append({
+                    "transportadora": company or "Otro",
+                    "numero": number,
+                    "url": url,
+                    "estado_fulfillment": status,
+                })
+    return entries
 
 
 async def consultar_pedido_shopify(telefono: str) -> list[dict]:
@@ -664,15 +684,8 @@ async def consultar_pedido_shopify(telefono: str) -> list[dict]:
                 precio = node.get("totalPriceSet", {}).get("shopMoney", {})
                 total = _formatear_total(precio.get("amount", ""))
 
-                # Tracking
-                tracking_number = ""
-                tracking_url = ""
-                fulfillments = node.get("fulfillments", [])
-                if fulfillments:
-                    tracking_info = fulfillments[0].get("trackingInfo", [])
-                    if tracking_info:
-                        tracking_number = tracking_info[0].get("number", "")
-                        tracking_url = tracking_info[0].get("url", "")
+                # Tracking — recolectar todos los fulfillments y tracking entries
+                tracking_entries = _extraer_tracking(node.get("fulfillments", []))
 
                 estado_financiero = _STATUS_FINANCIERO.get(
                     node.get("displayFinancialStatus", ""), node.get("displayFinancialStatus", "")
@@ -688,8 +701,7 @@ async def consultar_pedido_shopify(telefono: str) -> list[dict]:
                     "estado_envio": estado_envio,
                     "total": total,
                     "productos": productos,
-                    "tracking_number": tracking_number,
-                    "tracking_url": tracking_url,
+                    "tracking": tracking_entries,
                 })
 
             logger.info(f"Pedidos encontrados para {telefono_e164}: {len(resultado)}")
@@ -700,6 +712,81 @@ async def consultar_pedido_shopify(telefono: str) -> list[dict]:
         return []
     except Exception as e:
         logger.error(f"Error consultando pedidos: {e}")
+        return []
+
+
+async def consultar_pedido_por_email_shopify(email: str) -> list[dict]:
+    """
+    Consulta los últimos pedidos de una clienta por email.
+    Misma estructura de retorno que consultar_pedido_shopify.
+    """
+    if not SHOPIFY_ACCESS_TOKEN or SHOPIFY_ACCESS_TOKEN.startswith("REEMPLAZAR"):
+        logger.warning("SHOPIFY_ACCESS_TOKEN no configurado")
+        return []
+
+    email = email.strip().lower()
+    if not email or "@" not in email:
+        return []
+
+    url = f"{_base_url()}/graphql.json"
+    payload = {
+        "query": GRAPHQL_CONSULTAR_PEDIDOS,
+        "variables": {"query": f"email:{email}"},
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.post(url, json=payload, headers=_headers())
+            if r.status_code != 200:
+                logger.error(f"Shopify pedidos por email {r.status_code}: {r.text[:200]}")
+                return []
+
+            data = r.json()
+            if "errors" in data and not data.get("data"):
+                logger.error(f"Shopify GraphQL error pedidos email: {data['errors']}")
+                return []
+
+            edges = data.get("data", {}).get("orders", {}).get("edges", [])
+            resultado = []
+
+            for edge in edges:
+                node = edge["node"]
+                items = [e["node"] for e in node.get("lineItems", {}).get("edges", [])]
+                productos = ", ".join(
+                    f"{it.get('title', 'producto')} (x{it.get('quantity', 1)})"
+                    for it in items[:3]
+                )
+
+                precio = node.get("totalPriceSet", {}).get("shopMoney", {})
+                total = _formatear_total(precio.get("amount", ""))
+
+                tracking_entries = _extraer_tracking(node.get("fulfillments", []))
+
+                estado_financiero = _STATUS_FINANCIERO.get(
+                    node.get("displayFinancialStatus", ""), node.get("displayFinancialStatus", "")
+                )
+                estado_envio = _STATUS_ENVIO.get(
+                    node.get("displayFulfillmentStatus", ""), node.get("displayFulfillmentStatus", "")
+                )
+
+                resultado.append({
+                    "nombre_pedido": node.get("name", ""),
+                    "fecha": node.get("createdAt", "")[:10],
+                    "estado_pago": estado_financiero,
+                    "estado_envio": estado_envio,
+                    "total": total,
+                    "productos": productos,
+                    "tracking": tracking_entries,
+                })
+
+            logger.info(f"Pedidos encontrados para email {email}: {len(resultado)}")
+            return resultado
+
+    except httpx.TimeoutException:
+        logger.error("Timeout consultando pedidos por email en Shopify")
+        return []
+    except Exception as e:
+        logger.error(f"Error consultando pedidos por email: {e}")
         return []
 
 

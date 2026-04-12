@@ -66,13 +66,32 @@ TOOLS = [
         "description": (
             "Consulta el estado de los pedidos de la clienta en Shopify. "
             "Úsala cuando la clienta pregunte por su pedido, envío, tracking, "
-            "o 'dónde está mi pedido'. Busca automáticamente por el teléfono "
-            "de la conversación actual. Retorna los últimos 3 pedidos con "
-            "estado de pago, envío y número de seguimiento."
+            "o 'dónde está mi pedido'. IMPORTANTE: Antes de llamar esta "
+            "herramienta, SIEMPRE pídele a la clienta que confirme su número "
+            "de celular o su correo electrónico para verificar su identidad. "
+            "NUNCA consultes pedidos sin que la clienta haya proporcionado "
+            "explícitamente al menos uno de estos datos en la conversación. "
+            "Si la clienta ya proporcionó su celular o email en un mensaje "
+            "anterior de esta conversación, puedes usarlo."
         ),
         "input_schema": {
             "type": "object",
-            "properties": {},
+            "properties": {
+                "telefono": {
+                    "type": "string",
+                    "description": (
+                        "Número de celular que la clienta proporcionó para "
+                        "verificar su identidad. Ej: '3001234567', '+573001234567'."
+                    ),
+                },
+                "email": {
+                    "type": "string",
+                    "description": (
+                        "Correo electrónico que la clienta proporcionó para "
+                        "verificar su identidad. Ej: 'maria@gmail.com'."
+                    ),
+                },
+            },
             "required": [],
         },
     },
@@ -197,22 +216,39 @@ async def _ejecutar_herramienta(nombre: str, parametros: dict, telefono: str = "
             )
         return "\n\n".join(lineas)
     if nombre == "consultar_pedido":
-        from agent.shopify import consultar_pedido_shopify
-        if not telefono:
-            return "No tengo el número de teléfono de esta conversación para buscar pedidos."
-        pedidos = await consultar_pedido_shopify(telefono)
+        from agent.shopify import consultar_pedido_shopify, consultar_pedido_por_email_shopify
+        tel_proporcionado = parametros.get("telefono", "").strip()
+        email_proporcionado = parametros.get("email", "").strip()
+        if not tel_proporcionado and not email_proporcionado:
+            return (
+                "La clienta no ha proporcionado su número de celular ni su correo electrónico. "
+                "Pídele que confirme uno de los dos para poder consultar su pedido."
+            )
+        pedidos = []
+        if tel_proporcionado:
+            pedidos = await consultar_pedido_shopify(tel_proporcionado)
+        if not pedidos and email_proporcionado:
+            pedidos = await consultar_pedido_por_email_shopify(email_proporcionado)
         if not pedidos:
             return (
-                "No encontré pedidos asociados a este número de teléfono. "
-                "Pídele a la clienta su número de pedido o email para buscarlo de otra forma."
+                "No encontré pedidos asociados a los datos proporcionados. "
+                "Verifica que el número de celular o correo sea el mismo que usó al hacer la compra, "
+                "o pídele su número de pedido (ej: #1234)."
             )
         lineas = []
         for p in pedidos:
             tracking_str = ""
-            if p["tracking_number"]:
-                tracking_str = f"\n  Tracking: {p['tracking_number']}"
-                if p["tracking_url"]:
-                    tracking_str += f"\n  Rastrear aquí: {p['tracking_url']}"
+            tracking_entries = p.get("tracking", [])
+            if tracking_entries:
+                for t in tracking_entries:
+                    transportadora = t.get("transportadora", "")
+                    numero = t.get("numero", "")
+                    url = t.get("url", "")
+                    tracking_str += f"\n  Transportadora: {transportadora}"
+                    if numero:
+                        tracking_str += f"\n  Guía: {numero}"
+                    if url:
+                        tracking_str += f"\n  Rastrear aquí: {url}"
             elif p["estado_envio"] == "Enviado":
                 tracking_str = "\n  (Sin número de seguimiento aún)"
             lineas.append(
