@@ -12,13 +12,15 @@ from agent.memory import (
     TipoEventoFunnel, MetadataEvento,
     crear_escalacion, obtener_escalaciones, resolver_escalacion,
     asignar_variante_ab,
+    engine, Base,
 )
 from agent.utils import normalizar_telefono_e164
 
-
 @pytest.fixture(autouse=True)
 async def setup_db():
-    await inicializar_db()
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
     yield
 
 
@@ -46,7 +48,6 @@ class TestNormalizarTelefono:
 
 # ── Tests funnel events ──────────────────────────────────
 
-@pytest.mark.asyncio
 class TestFunnelEvents:
     async def test_registrar_evento_simple(self):
         await registrar_evento_funnel(
@@ -99,7 +100,6 @@ class TestFunnelEvents:
 
 # ── Tests escalaciones con debounce ──────────────────────
 
-@pytest.mark.asyncio
 class TestEscalaciones:
     async def test_crear_escalacion(self):
         esc = await crear_escalacion("+573001234567", "pedido no llego", "clienta espera desde hace 5 dias")
