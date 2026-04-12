@@ -13,29 +13,32 @@ export function ChatBubble({ mensaje }: { mensaje: Mensaje }) {
         style={{
           maxWidth: '75%',
           background: isUser
-            ? 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
+            ? 'linear-gradient(145deg, #c2614b, #d4a574)'
             : hasIssue
-            ? '#fff8e1'
-            : '#f3f0ff',
-          color: isUser ? 'white' : '#1a1a2e',
-          padding: '10px 14px',
-          borderRadius: isUser ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
-          borderLeft: hasIssue ? '3px solid #f59e0b' : undefined,
+            ? '#fef3e2'
+            : 'var(--color-muted)',
+          color: isUser ? '#faf6f1' : 'var(--color-text)',
+          padding: '11px 15px',
+          borderRadius: isUser ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
+          borderLeft: hasIssue ? '3px solid #c49230' : undefined,
           fontSize: 14,
-          lineHeight: '1.5',
-          boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
+          lineHeight: '1.55',
+          boxShadow: isUser
+            ? '0 2px 8px rgba(194, 97, 75, 0.2)'
+            : '0 1px 3px rgba(28, 25, 23, 0.04)',
         }}
       >
-        <p>{mensaje.content}</p>
+        <p style={{ whiteSpace: 'pre-wrap' }}>{mensaje.content}</p>
         <p
           style={{
-            fontSize: 11,
-            opacity: 0.65,
-            marginTop: 4,
+            fontSize: 10,
+            opacity: 0.6,
+            marginTop: 5,
             textAlign: 'right',
+            letterSpacing: '0.02em',
           }}
         >
-          {formatDate(mensaje.timestamp)} · {isUser ? 'Clienta' : `Laura ${hasIssue ? '⚠️' : '✅'}`}
+          {formatDate(mensaje.timestamp)} · {isUser ? 'Clienta' : `Laura ${hasIssue ? '!' : ''}`}
         </p>
       </div>
     </div>

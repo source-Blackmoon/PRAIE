@@ -38,7 +38,7 @@ const STEP_LABELS: Record<string, string> = {
   compra_realizada: 'Compras realizadas',
 }
 
-const STEP_COLORS = ['#764ba2', '#9b6dd7', '#c084fc', '#e879f9']
+const STEP_COLORS = ['#c2614b', '#d4735e', '#d4a574', '#c49230']
 
 function FunnelChart({ data }: { data: FunnelData }) {
   const maxEventos = Math.max(...data.funnel.map(s => s.eventos), 1)
@@ -59,7 +59,7 @@ function FunnelChart({ data }: { data: FunnelData }) {
                 {STEP_LABELS[step.paso] || step.paso}
               </span>
               <div className="flex items-center gap-3">
-                <span className="text-sm font-bold" style={{ color: STEP_COLORS[i] || '#764ba2' }}>
+                <span className="text-sm font-bold" style={{ color: STEP_COLORS[i] || '#c2614b' }}>
                   {step.eventos}
                 </span>
                 <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
@@ -67,7 +67,7 @@ function FunnelChart({ data }: { data: FunnelData }) {
                 </span>
                 {dropoff !== null && dropoff > 0 && (
                   <span className="text-xs font-medium px-1.5 py-0.5 rounded"
-                    style={{ background: '#fee2e2', color: '#dc2626' }}>
+                    style={{ background: '#fef2f0', color: '#a34e3b' }}>
                     -{dropoff}%
                   </span>
                 )}
@@ -79,7 +79,7 @@ function FunnelChart({ data }: { data: FunnelData }) {
                 animate={{ width: `${width}%` }}
                 transition={{ duration: 0.6, delay: i * 0.1 }}
                 className="h-full rounded-lg"
-                style={{ background: STEP_COLORS[i] || '#764ba2' }}
+                style={{ background: STEP_COLORS[i] || '#c2614b' }}
               />
             </div>
           </div>
@@ -87,8 +87,8 @@ function FunnelChart({ data }: { data: FunnelData }) {
       })}
 
       {data.valor_total_compras > 0 && (
-        <div className="mt-4 p-3 rounded-xl" style={{ background: '#d1fae5' }}>
-          <p className="text-sm font-bold" style={{ color: '#065f46' }}>
+        <div className="mt-4 p-3 rounded-xl" style={{ background: '#e8f0eb' }}>
+          <p className="text-sm font-bold" style={{ color: '#3d6b4f' }}>
             Valor total compras: ${data.valor_total_compras.toLocaleString('es-CO')} COP
           </p>
         </div>
@@ -197,8 +197,15 @@ export default function AnalisisPage() {
   return (
     <div>
       <div className="mb-8">
-        <h1 className="text-3xl font-black gradient-text">Análisis con IA</h1>
-        <p className="text-sm mt-1" style={{ color: 'var(--color-text-muted)' }}>
+        <motion.h1
+          initial={{ opacity: 0, x: -10 }}
+          animate={{ opacity: 1, x: 0 }}
+          className="heading-display gradient-text"
+          style={{ fontSize: '2.25rem' }}
+        >
+          Analisis con IA
+        </motion.h1>
+        <p className="text-sm mt-2" style={{ color: 'var(--color-text-muted)' }}>
           Claude analiza las conversaciones reales y sugiere mejoras concretas
         </p>
       </div>
@@ -207,8 +214,7 @@ export default function AnalisisPage() {
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="rounded-2xl p-6 mb-6"
-        style={{ background: 'white', boxShadow: '0 2px 12px rgba(118,75,162,0.08)' }}
+        className="card p-6 mb-6"
       >
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
@@ -228,7 +234,7 @@ export default function AnalisisPage() {
 
         {funnelLoading ? (
           <div className="flex items-center justify-center py-12">
-            <div className="w-6 h-6 rounded-full border-2 border-purple-200 border-t-purple-600 animate-spin" />
+            <div className="w-6 h-6 rounded-full border-2 animate-spin" style={{ borderColor: 'var(--color-muted)', borderTopColor: 'var(--color-primary)' }} />
           </div>
         ) : funnelData && funnelData.funnel.some(s => s.eventos > 0) ? (
           <FunnelChart data={funnelData} />
@@ -246,8 +252,7 @@ export default function AnalisisPage() {
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="rounded-2xl p-6"
-          style={{ background: 'white', boxShadow: '0 2px 12px rgba(118,75,162,0.08)' }}
+          className="card p-6"
         >
           <h2 className="font-bold text-base mb-6" style={{ color: 'var(--color-text)' }}>
             Configurar análisis
@@ -344,9 +349,9 @@ export default function AnalisisPage() {
               animate={{ opacity: 1, y: 0 }}
               className="mt-4 p-3 rounded-xl text-sm font-medium"
               style={{
-                background: result.ok ? '#d1fae5' : '#fee2e2',
-                color: result.ok ? '#065f46' : '#7f1d1d',
-                borderLeft: `4px solid ${result.ok ? '#10b981' : '#ef4444'}`,
+                background: result.ok ? '#e8f0eb' : '#fef2f0',
+                color: result.ok ? '#3d6b4f' : '#a34e3b',
+                borderLeft: `4px solid ${result.ok ? '#5a8a6e' : '#c2614b'}`,
               }}
             >
               {result.ok ? '✅ ' : '❌ '}{result.msg}
@@ -361,10 +366,7 @@ export default function AnalisisPage() {
           transition={{ delay: 0.1 }}
           className="space-y-4"
         >
-          <div
-            className="rounded-2xl p-6"
-            style={{ background: 'white', boxShadow: '0 2px 12px rgba(118,75,162,0.08)' }}
-          >
+          <div className="card p-6">
             <div className="flex items-center gap-3 mb-4">
               <div className="p-2.5 rounded-xl gradient-bg">
                 <DollarSign size={18} className="text-white" />
@@ -379,9 +381,7 @@ export default function AnalisisPage() {
             </p>
           </div>
 
-          <div
-            className="rounded-2xl p-6"
-            style={{ background: 'white', boxShadow: '0 2px 12px rgba(118,75,162,0.08)' }}
+          <div className="card p-6"
           >
             <div className="flex items-center gap-2 mb-3">
               <Sparkles size={16} style={{ color: 'var(--color-primary)' }} />
@@ -422,8 +422,7 @@ export default function AnalisisPage() {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.2 }}
-        className="rounded-2xl p-6 mt-6"
-        style={{ background: 'white', boxShadow: '0 2px 12px rgba(118,75,162,0.08)' }}
+        className="card p-6 mt-6"
       >
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
@@ -518,7 +517,7 @@ export default function AnalisisPage() {
 
         {abLoading ? (
           <div className="flex items-center justify-center py-8">
-            <div className="w-6 h-6 rounded-full border-2 border-purple-200 border-t-purple-600 animate-spin" />
+            <div className="w-6 h-6 rounded-full border-2 animate-spin" style={{ borderColor: 'var(--color-muted)', borderTopColor: 'var(--color-primary)' }} />
           </div>
         ) : abTests.length === 0 ? (
           <div className="text-center py-8">
@@ -541,7 +540,7 @@ export default function AnalisisPage() {
                   className="p-4 rounded-xl"
                   style={{
                     background: 'var(--color-muted)',
-                    borderLeft: test.activo ? '4px solid #764ba2' : '4px solid #d1d5db',
+                    borderLeft: test.activo ? '4px solid var(--color-primary)' : '4px solid var(--color-border)',
                   }}
                 >
                   <div className="flex items-center justify-between mb-3">
@@ -552,8 +551,8 @@ export default function AnalisisPage() {
                       <span
                         className="text-xs px-2 py-0.5 rounded-full font-medium"
                         style={{
-                          background: test.activo ? '#d1fae5' : '#f3f4f6',
-                          color: test.activo ? '#065f46' : '#6b7280',
+                          background: test.activo ? '#e8f0eb' : '#f5efe8',
+                          color: test.activo ? '#3d6b4f' : '#6b7280',
                         }}
                       >
                         {test.activo ? 'Activo' : 'Pausado'}
@@ -569,7 +568,7 @@ export default function AnalisisPage() {
                       <button
                         onClick={() => pausarAbTest(test.id)}
                         className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium"
-                        style={{ background: '#fee2e2', color: '#dc2626', border: 'none', cursor: 'pointer' }}
+                        style={{ background: '#fef2f0', color: '#a34e3b', border: 'none', cursor: 'pointer' }}
                       >
                         <Pause size={12} /> Pausar
                       </button>
@@ -577,8 +576,8 @@ export default function AnalisisPage() {
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
-                    <div className="p-3 rounded-lg" style={{ background: 'white' }}>
-                      <p className="text-xs font-semibold mb-1" style={{ color: '#764ba2' }}>Variante A</p>
+                    <div className="p-3 rounded-lg" style={{ background: 'var(--color-card)' }}>
+                      <p className="text-xs font-semibold mb-1" style={{ color: '#c2614b' }}>Variante A</p>
                       <div className="flex items-baseline gap-2">
                         <span className="text-2xl font-black" style={{ color: 'var(--color-text)' }}>{rateA}%</span>
                         <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
@@ -586,8 +585,8 @@ export default function AnalisisPage() {
                         </span>
                       </div>
                     </div>
-                    <div className="p-3 rounded-lg" style={{ background: 'white' }}>
-                      <p className="text-xs font-semibold mb-1" style={{ color: '#e879f9' }}>Variante B</p>
+                    <div className="p-3 rounded-lg" style={{ background: 'var(--color-card)' }}>
+                      <p className="text-xs font-semibold mb-1" style={{ color: '#d4a574' }}>Variante B</p>
                       <div className="flex items-baseline gap-2">
                         <span className="text-2xl font-black" style={{ color: 'var(--color-text)' }}>{rateB}%</span>
                         <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>

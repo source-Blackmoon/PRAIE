@@ -1,32 +1,37 @@
 @import "tailwindcss";
 
 @theme {
-  /* Brand colors */
-  --color-primary: #764ba2;
-  --color-primary-dark: #5a3680;
-  --color-primary-light: #667eea;
-  --color-surface: #f8f7ff;
-  --color-sidebar: #1a0a2e;
-  --color-sidebar-hover: #2d1454;
-  --color-card: #ffffff;
-  --color-muted: #f3f0ff;
-  --color-border: #e8e0f4;
-  --color-text: #1a1a2e;
-  --color-text-muted: #6b7280;
+  /* Brand — Tropical Editorial */
+  --color-primary: #c2614b;
+  --color-primary-dark: #a34e3b;
+  --color-primary-light: #e08872;
+  --color-accent: #d4a574;
+  --color-accent-light: #e8c9a8;
 
-  /* Status colors */
-  --color-success: #10b981;
-  --color-warning: #f59e0b;
-  --color-danger: #ef4444;
+  /* Surfaces */
+  --color-surface: #faf6f1;
+  --color-sidebar: #1c1917;
+  --color-sidebar-hover: #292524;
+  --color-card: #fffcf8;
+  --color-muted: #f5efe8;
+  --color-border: #e7ddd0;
+  --color-text: #1c1917;
+  --color-text-muted: #78716c;
 
-  /* Font */
-  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  /* Status */
+  --color-success: #5a8a6e;
+  --color-warning: #c49230;
+  --color-danger: #c2614b;
 
-  /* Radius */
-  --radius-sm: 6px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
-  --radius-xl: 24px;
+  /* Font stack */
+  --font-display: 'Playfair Display', 'Georgia', serif;
+  --font-sans: 'DM Sans', system-ui, -apple-system, sans-serif;
+
+  /* Radius — softer, more organic */
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-xl: 28px;
 }
 
 * {
@@ -41,9 +46,22 @@ body {
   background-color: var(--color-surface);
   color: var(--color-text);
   font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* Scrollbar styling */
+/* Subtle grain texture overlay */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0.025;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+}
+
+/* Scrollbar — warm tones */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -54,17 +72,17 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #d1c4e9;
+  background: #d4c4b0;
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #b39ddb;
+  background: #b8a590;
 }
 
-/* Gradient text utility */
+/* Gradient text — warm coral */
 .gradient-text {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #c2614b 0%, #d4a574 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -72,5 +90,52 @@ body {
 
 /* Primary gradient background */
 .gradient-bg {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #c2614b 0%, #d4a574 100%);
+}
+
+/* Display heading style */
+.heading-display {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+/* Card base style */
+.card {
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 1px 3px rgba(28, 25, 23, 0.04), 0 8px 24px rgba(28, 25, 23, 0.03);
+}
+
+/* Warm shadow utilities */
+.shadow-warm {
+  box-shadow: 0 1px 3px rgba(28, 25, 23, 0.04), 0 8px 24px rgba(28, 25, 23, 0.03);
+}
+
+.shadow-warm-lg {
+  box-shadow: 0 4px 12px rgba(28, 25, 23, 0.06), 0 16px 40px rgba(28, 25, 23, 0.05);
+}
+
+/* Separator line — warm */
+.divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--color-border), transparent);
+}
+
+/* Status dot pulse */
+@keyframes warm-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.pulse-warm {
+  animation: warm-pulse 2s ease-in-out infinite;
+}
+
+/* Selection color */
+::selection {
+  background: rgba(194, 97, 75, 0.15);
+  color: var(--color-text);
 }

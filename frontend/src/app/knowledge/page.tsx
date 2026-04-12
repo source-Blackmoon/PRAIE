@@ -70,8 +70,15 @@ export default function KnowledgePage() {
   return (
     <div>
       <div className="mb-8">
-        <h1 className="text-3xl font-black gradient-text">Knowledge Base</h1>
-        <p className="text-sm mt-1" style={{ color: 'var(--color-text-muted)' }}>
+        <motion.h1
+          initial={{ opacity: 0, x: -10 }}
+          animate={{ opacity: 1, x: 0 }}
+          className="heading-display gradient-text"
+          style={{ fontSize: '2.25rem' }}
+        >
+          Knowledge Base
+        </motion.h1>
+        <p className="text-sm mt-2" style={{ color: 'var(--color-text-muted)' }}>
           Edita lo que Laura sabe — los cambios aplican al reiniciar el servidor
         </p>
       </div>
@@ -79,14 +86,17 @@ export default function KnowledgePage() {
       <div className="flex gap-5" style={{ height: 'calc(100vh - 180px)' }}>
         {/* File list */}
         <div
-          className="rounded-2xl p-4"
-          style={{ width: 220, flexShrink: 0, background: 'white', boxShadow: '0 2px 12px rgba(118,75,162,0.08)' }}
+          className="card p-4"
+          style={{ width: 220, flexShrink: 0 }}
         >
-          <p className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--color-text-muted)' }}>
+          <p className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--color-text-muted)', letterSpacing: '0.08em' }}>
             Archivos
           </p>
           {loading ? (
-            <div className="text-sm" style={{ color: 'var(--color-text-muted)' }}>Cargando...</div>
+            <div className="flex items-center gap-2 py-4">
+              <div className="w-4 h-4 rounded-full border-2 animate-spin" style={{ borderColor: 'var(--color-muted)', borderTopColor: 'var(--color-primary)' }} />
+              <span className="text-sm" style={{ color: 'var(--color-text-muted)' }}>Cargando...</span>
+            </div>
           ) : (
             <div className="space-y-1">
               {files.map((f) => (
@@ -102,6 +112,7 @@ export default function KnowledgePage() {
                     border: 'none',
                     cursor: 'pointer',
                     background: selected === f.name ? 'var(--color-muted)' : 'transparent',
+                    borderLeft: selected === f.name ? '3px solid var(--color-primary)' : '3px solid transparent',
                     color: selected === f.name ? 'var(--color-primary)' : 'var(--color-text)',
                     fontWeight: selected === f.name ? 700 : 400,
                     transition: 'all 0.15s',
@@ -123,15 +134,15 @@ export default function KnowledgePage() {
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          className="flex flex-col flex-1 rounded-2xl overflow-hidden"
-          style={{ background: 'white', boxShadow: '0 2px 12px rgba(118,75,162,0.08)' }}
+          className="card flex flex-col flex-1"
+          style={{ overflow: 'hidden' }}
         >
           {/* Toolbar */}
-          <div className="flex items-center justify-between px-6 py-4 border-b" style={{ borderColor: 'var(--color-border)' }}>
+          <div className="flex items-center justify-between px-6 py-4" style={{ borderBottom: '1px solid var(--color-border)' }}>
             <div>
               <p className="font-bold" style={{ color: 'var(--color-text)' }}>{selected || 'Selecciona un archivo'}</p>
-              {isDirty && <p className="text-xs mt-0.5" style={{ color: '#f59e0b' }}>Cambios sin guardar</p>}
-              {saved && <p className="text-xs mt-0.5" style={{ color: '#10b981' }}>✓ Guardado correctamente</p>}
+              {isDirty && <p className="text-xs mt-0.5" style={{ color: '#c49230' }}>Cambios sin guardar</p>}
+              {saved && <p className="text-xs mt-0.5" style={{ color: '#5a8a6e' }}>Guardado correctamente</p>}
             </div>
             <div className="flex gap-2">
               <button
@@ -141,7 +152,7 @@ export default function KnowledgePage() {
                 style={{
                   border: '1.5px solid var(--color-border)',
                   background: 'transparent',
-                  color: isDirty ? 'var(--color-text-muted)' : '#ccc',
+                  color: isDirty ? 'var(--color-text-muted)' : 'var(--color-border)',
                   cursor: isDirty ? 'pointer' : 'default',
                 }}
               >
@@ -179,22 +190,22 @@ export default function KnowledgePage() {
 
           {/* Quick add (only for preguntas_reales.txt) */}
           {selected === 'preguntas_reales.txt' && (
-            <div className="px-6 py-4 border-t" style={{ borderColor: 'var(--color-border)', background: 'var(--color-muted)' }}>
-              <p className="text-xs font-semibold mb-3" style={{ color: 'var(--color-text-muted)' }}>
-                Agregar pregunta rápida
+            <div className="px-6 py-4" style={{ borderTop: '1px solid var(--color-border)', background: 'var(--color-muted)' }}>
+              <p className="text-xs font-semibold mb-3" style={{ color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Agregar pregunta rapida
               </p>
               <div className="flex gap-2">
                 <input
                   value={newQ}
                   onChange={(e) => setNewQ(e.target.value)}
                   placeholder="Pregunta de clienta"
-                  style={{ flex: 1, padding: '8px 12px', borderRadius: 10, border: '1.5px solid var(--color-border)', fontSize: 13, outline: 'none' }}
+                  style={{ flex: 1, padding: '8px 12px', borderRadius: 10, border: '1.5px solid var(--color-border)', fontSize: 13, outline: 'none', background: 'var(--color-card)' }}
                 />
                 <input
                   value={newA}
                   onChange={(e) => setNewA(e.target.value)}
                   placeholder="Respuesta de Laura"
-                  style={{ flex: 1, padding: '8px 12px', borderRadius: 10, border: '1.5px solid var(--color-border)', fontSize: 13, outline: 'none' }}
+                  style={{ flex: 1, padding: '8px 12px', borderRadius: 10, border: '1.5px solid var(--color-border)', fontSize: 13, outline: 'none', background: 'var(--color-card)' }}
                 />
                 <button
                   onClick={addEntry}

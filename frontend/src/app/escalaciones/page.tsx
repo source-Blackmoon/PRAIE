@@ -47,9 +47,16 @@ export default function EscalacionesPage() {
 
   return (
     <div>
-      <div className="mb-8">
-        <h1 className="text-3xl font-black gradient-text">Escalaciones</h1>
-        <p className="text-sm mt-1" style={{ color: 'var(--color-text-muted)' }}>
+      <div className="mb-10">
+        <motion.h1
+          initial={{ opacity: 0, x: -10 }}
+          animate={{ opacity: 1, x: 0 }}
+          className="heading-display gradient-text"
+          style={{ fontSize: '2.25rem' }}
+        >
+          Escalaciones
+        </motion.h1>
+        <p className="text-sm mt-2" style={{ color: 'var(--color-text-muted)' }}>
           Casos que Laura no pudo resolver y necesitan atencion humana
         </p>
       </div>
@@ -60,21 +67,20 @@ export default function EscalacionesPage() {
           <button
             key={tab}
             onClick={() => setEstado(tab)}
+            className="card"
             style={{
               padding: '8px 20px',
-              borderRadius: 10,
-              border: estado === tab ? '2px solid var(--color-primary)' : '2px solid var(--color-border)',
-              background: estado === tab ? 'var(--color-muted)' : 'white',
+              background: estado === tab ? 'var(--color-card)' : 'transparent',
+              border: estado === tab ? '1px solid var(--color-primary)' : '1px solid var(--color-border)',
               color: estado === tab ? 'var(--color-primary)' : 'var(--color-text-muted)',
-              fontWeight: estado === tab ? 700 : 400,
-              fontSize: 14,
-              cursor: 'pointer',
-              transition: 'all 0.15s',
+              fontWeight: estado === tab ? 600 : 400,
+              fontSize: 14, cursor: 'pointer',
+              boxShadow: estado === tab ? '0 2px 8px rgba(194, 97, 75, 0.1)' : 'none',
             }}
           >
             {tab === 'pendiente' ? 'Pendientes' : 'Resueltas'}
             {tab === 'pendiente' && escalaciones.length > 0 && estado === 'pendiente' && (
-              <span className="ml-2 px-1.5 py-0.5 rounded-full text-xs text-white gradient-bg">
+              <span className="ml-2 px-1.5 py-0.5 rounded-full text-xs text-white gradient-bg" style={{ fontSize: 10 }}>
                 {escalaciones.length}
               </span>
             )}
@@ -85,7 +91,7 @@ export default function EscalacionesPage() {
       {/* Content */}
       {loading ? (
         <div className="flex items-center justify-center py-20">
-          <div className="w-6 h-6 rounded-full border-2 border-purple-200 border-t-purple-600 animate-spin" />
+          <div className="w-6 h-6 rounded-full border-2 animate-spin" style={{ borderColor: 'var(--color-muted)', borderTopColor: 'var(--color-primary)' }} />
         </div>
       ) : escalaciones.length === 0 ? (
         <motion.div
@@ -93,7 +99,7 @@ export default function EscalacionesPage() {
           animate={{ opacity: 1 }}
           className="text-center py-20"
         >
-          <CheckCircle size={48} style={{ color: 'var(--color-text-muted)', margin: '0 auto 12px' }} />
+          <CheckCircle size={48} style={{ color: '#d4c4b0', margin: '0 auto 12px' }} />
           <p className="text-sm font-medium" style={{ color: 'var(--color-text-muted)' }}>
             {estado === 'pendiente'
               ? 'No hay escalaciones pendientes. Laura esta resolviendo todo sola.'
@@ -109,28 +115,26 @@ export default function EscalacionesPage() {
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, x: -100 }}
-                className="rounded-2xl p-5"
+                className="card p-5"
                 style={{
-                  background: 'white',
-                  boxShadow: '0 2px 12px rgba(118,75,162,0.08)',
                   borderLeft: estado === 'pendiente'
-                    ? '4px solid #f59e0b'
-                    : '4px solid #10b981',
+                    ? '3px solid #c49230'
+                    : '3px solid #5a8a6e',
                 }}
               >
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
                     <div className="flex items-center gap-3 mb-2">
                       <div
-                        className="p-2 rounded-lg"
+                        className="p-2 rounded-xl"
                         style={{
-                          background: estado === 'pendiente' ? '#fef3c7' : '#d1fae5',
+                          background: estado === 'pendiente' ? '#fef3e2' : '#e8f0eb',
                         }}
                       >
                         {estado === 'pendiente' ? (
-                          <AlertTriangle size={16} style={{ color: '#f59e0b' }} />
+                          <AlertTriangle size={16} style={{ color: '#c49230' }} />
                         ) : (
-                          <CheckCircle size={16} style={{ color: '#10b981' }} />
+                          <CheckCircle size={16} style={{ color: '#5a8a6e' }} />
                         )}
                       </div>
                       <div>
@@ -169,17 +173,14 @@ export default function EscalacionesPage() {
                       disabled={resolviendo === esc.id}
                       className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold"
                       style={{
-                        background: '#d1fae5',
-                        color: '#065f46',
-                        border: 'none',
-                        cursor: resolviendo === esc.id ? 'default' : 'pointer',
+                        background: '#e8f0eb', color: '#3d6b4f',
+                        border: 'none', cursor: resolviendo === esc.id ? 'default' : 'pointer',
                         opacity: resolviendo === esc.id ? 0.6 : 1,
-                        transition: 'opacity 0.15s',
                         whiteSpace: 'nowrap',
                       }}
                     >
                       {resolviendo === esc.id ? (
-                        <div className="w-4 h-4 rounded-full border-2 border-green-300 border-t-green-700 animate-spin" />
+                        <div className="w-4 h-4 rounded-full border-2 animate-spin" style={{ borderColor: '#a8d4b8', borderTopColor: '#3d6b4f' }} />
                       ) : (
                         <CheckCircle size={14} />
                       )}

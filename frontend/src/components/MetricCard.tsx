@@ -12,27 +12,61 @@ interface MetricCardProps {
   delay?: number
 }
 
+const WARM_GRADIENTS: Record<string, { bg: string; icon: string; text: string }> = {
+  coral: { bg: 'linear-gradient(145deg, #c2614b, #d4735e)', icon: '#fef2f0', text: '#fef2f0' },
+  sand: { bg: 'linear-gradient(145deg, #d4a574, #c49230)', icon: '#fefaf4', text: '#fefaf4' },
+  sage: { bg: 'linear-gradient(145deg, #5a8a6e, #4a7a5e)', icon: '#f0f7f2', text: '#f0f7f2' },
+  stone: { bg: 'linear-gradient(145deg, #78716c, #57534e)', icon: '#f5f5f4', text: '#f5f5f4' },
+  terracotta: { bg: 'linear-gradient(145deg, #a34e3b, #c2614b)', icon: '#fef2f0', text: '#fef2f0' },
+}
+
+function resolveScheme(color?: string): { bg: string; icon: string; text: string } {
+  if (!color) return WARM_GRADIENTS.coral
+  // Check if it's a gradient string (old format) and map to warm scheme
+  if (color.includes('#10b981') || color.includes('#059669')) return WARM_GRADIENTS.sage
+  if (color.includes('#f59e0b') || color.includes('#d97706')) return WARM_GRADIENTS.sand
+  if (color.includes('#ef4444') || color.includes('#b91c1c')) return WARM_GRADIENTS.terracotta
+  if (color.includes('#8b5cf6') || color.includes('#6d28d9') || color.includes('#764ba2')) return WARM_GRADIENTS.coral
+  if (color.includes('#6b7280') || color.includes('#4b5563')) return WARM_GRADIENTS.stone
+  return WARM_GRADIENTS.coral
+}
+
 export function MetricCard({ label, value, icon: Icon, gradient, color, delay = 0 }: MetricCardProps) {
+  const scheme = resolveScheme(gradient ? undefined : color)
+
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
+      initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, delay }}
-      whileHover={{ scale: 1.02 }}
-      className="rounded-2xl p-6 text-white shadow-lg"
+      transition={{ duration: 0.5, delay, ease: [0.25, 0.46, 0.45, 0.94] }}
+      whileHover={{ y: -2, transition: { duration: 0.2 } }}
+      className="rounded-2xl p-6 relative overflow-hidden"
       style={{
-        background: gradient
-          ? 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
-          : color || 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        background: scheme.bg,
+        color: scheme.text,
       }}
     >
-      <div className="flex items-start justify-between">
+      {/* Decorative circle */}
+      <div
+        className="absolute -right-4 -top-4 w-20 h-20 rounded-full"
+        style={{ background: 'rgba(255,255,255,0.08)' }}
+      />
+
+      <div className="flex items-start justify-between relative z-10">
         <div>
-          <p className="text-white/70 text-sm font-medium mb-1">{label}</p>
-          <p className="text-4xl font-black tracking-tight">{value}</p>
+          <p className="text-sm font-medium mb-2" style={{ opacity: 0.8 }}>{label}</p>
+          <p
+            className="text-3xl font-bold tracking-tight"
+            style={{ fontFamily: 'var(--font-display)' }}
+          >
+            {value}
+          </p>
         </div>
-        <div className="p-2.5 bg-white/20 rounded-xl">
-          <Icon size={22} />
+        <div
+          className="p-2 rounded-xl"
+          style={{ background: 'rgba(255,255,255,0.15)' }}
+        >
+          <Icon size={20} style={{ color: scheme.icon }} />
         </div>
       </div>
     </motion.div>
