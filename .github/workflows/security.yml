@@ -1,0 +1,60 @@
+name: Security Audit
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 8 * * 1'  # Lunes 8am UTC
+
+jobs:
+  pip-audit:
+    name: Escanear vulnerabilidades de dependencias
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt pip-audit
+
+      - name: Ejecutar pip-audit
+        run: pip-audit --requirement requirements.txt --format=json --output pip-audit-report.json || true
+
+      - name: Mostrar reporte
+        run: pip-audit --requirement requirements.txt || echo "Revisar reporte de vulnerabilidades"
+
+      - name: Subir reporte como artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pip-audit-report
+          path: pip-audit-report.json
+
+  syntax-check:
+    name: Verificar sintaxis Python
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Verificar sintaxis de modulos clave
+        run: |
+          python -m py_compile agent/main.py
+          python -m py_compile agent/brain.py
+          python -m py_compile agent/memory.py
+          python -m py_compile agent/carrito.py
+          python -m py_compile agent/providers/twilio.py
+          echo "Todos los archivos compilan correctamente"

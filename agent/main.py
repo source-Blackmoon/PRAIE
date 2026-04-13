@@ -2,6 +2,7 @@ import os
 import hmac as hmac_mod
 import asyncio
 import logging
+import secrets
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
@@ -107,11 +108,28 @@ limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# SEC-019: Limitar tareas concurrentes de procesamiento de mensajes
+_MAX_CONCURRENT = int(os.getenv("MAX_CONCURRENT_MESSAGES", "10"))
+_semaforo_mensajes = asyncio.Semaphore(_MAX_CONCURRENT)
+
 CORS_ORIGINS = [
     "http://localhost:4001",
     "http://localhost:4000",
     "https://praie-front-production.up.railway.app",
 ]
+
+# ── SEC-023: HTTPS enforcement middleware ─────────────────
+@app.middleware("http")
+async def https_enforcement(request: Request, call_next):
+    """En produccion, rechaza conexiones HTTP sin encabezado X-Forwarded-Proto: https."""
+    if ENVIRONMENT == "production":
+        proto = request.headers.get("x-forwarded-proto", "https")
+        if proto != "https":
+            from fastapi.responses import RedirectResponse
+            https_url = str(request.url).replace("http://", "https://", 1)
+            return RedirectResponse(url=https_url, status_code=301)
+    return await call_next(request)
+
 
 # ── SEC-013: Audit logging middleware ─────────────────────
 audit_logger = logging.getLogger("agentkit.audit")
@@ -147,6 +165,37 @@ async def health_check():
     }
 
 
+@app.get("/health")
+async def health_check_profundo():
+    """SEC-022: Health check profundo — verifica DB, Claude API y proveedor."""
+    checks: dict[str, str] = {}
+
+    # Verificar DB
+    try:
+        from sqlalchemy import text
+        async with async_session() as session:
+            await session.execute(text("SELECT 1"))
+        checks["database"] = "ok"
+    except Exception as e:
+        checks["database"] = f"error: {e}"
+
+    # Verificar API key de Anthropic configurada
+    checks["anthropic_key"] = "ok" if os.getenv("ANTHROPIC_API_KEY") else "missing"
+
+    # Verificar proveedor configurado
+    checks["whatsapp_provider"] = proveedor.__class__.__name__
+
+    # Estado general
+    all_ok = all(v == "ok" for v in checks.values() if v != checks["whatsapp_provider"])
+    status_code = 200 if all_ok else 503
+
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=status_code,
+        content={"status": "ok" if all_ok else "degraded", "checks": checks},
+    )
+
+
 # ── WhatsApp webhook ───────────────────────────────────────
 @app.get("/webhook")
 @limiter.limit("10/minute")
@@ -159,20 +208,21 @@ async def webhook_verificacion(request: Request):
 
 async def _procesar_mensaje(telefono: str, texto: str, historial: list):
     """Procesa el mensaje y envía la respuesta en background."""
-    try:
-        await guardar_mensaje(telefono, "user", texto)
-        # Funnel: registrar mensaje recibido
-        await registrar_evento_funnel(telefono, TipoEventoFunnel.MENSAJE_RECIBIDO)
-        respuesta = await generar_respuesta(texto, historial, telefono)
-        await guardar_mensaje(telefono, "assistant", respuesta)
-        ok = await proveedor.enviar_mensaje(telefono, respuesta)
-        tel_log = _ofuscar_telefono(telefono)
-        if ok:
-            logger.info(f"Respuesta enviada a {tel_log}")
-        else:
-            logger.error(f"Fallo al enviar respuesta a {tel_log}")
-    except Exception as e:
-        logger.error(f"Error procesando mensaje de {_ofuscar_telefono(telefono)}: {e}")
+    async with _semaforo_mensajes:  # SEC-019: max _MAX_CONCURRENT simultaneos
+        try:
+            await guardar_mensaje(telefono, "user", texto)
+            # Funnel: registrar mensaje recibido
+            await registrar_evento_funnel(telefono, TipoEventoFunnel.MENSAJE_RECIBIDO)
+            respuesta = await generar_respuesta(texto, historial, telefono)
+            await guardar_mensaje(telefono, "assistant", respuesta)
+            ok = await proveedor.enviar_mensaje(telefono, respuesta)
+            tel_log = _ofuscar_telefono(telefono)
+            if ok:
+                logger.info(f"Respuesta enviada a {tel_log}")
+            else:
+                logger.error(f"Fallo al enviar respuesta a {tel_log}")
+        except Exception as e:
+            logger.error(f"Error procesando mensaje de {_ofuscar_telefono(telefono)}: {e}")
 
 
 @app.post("/webhook")
@@ -204,18 +254,48 @@ SHOPIFY_CLIENT_SECRET = os.getenv("SHOPIFY_CLIENT_SECRET", "")
 SHOPIFY_OAUTH_SCOPES = "read_products,read_orders,write_webhooks,read_webhooks"
 SHOPIFY_REDIRECT_URI = "https://praie-production.up.railway.app/shopify/oauth/callback"
 
+# SEC-017: Almacen en memoria de states OAuth validos (TTL implicito por reinicio)
+_oauth_states: dict[str, float] = {}
+_OAUTH_STATE_TTL = 600  # 10 minutos
+
+
+def _generar_oauth_state() -> str:
+    """Genera un state aleatorio y lo registra para validacion posterior."""
+    import time
+    state = secrets.token_urlsafe(32)
+    # Limpiar states expirados
+    ahora = time.time()
+    expirados = [k for k, v in _oauth_states.items() if ahora - v > _OAUTH_STATE_TTL]
+    for k in expirados:
+        del _oauth_states[k]
+    _oauth_states[state] = ahora
+    return state
+
+
+def _validar_oauth_state(state: str) -> bool:
+    """Valida que el state exista y no haya expirado."""
+    import time
+    if state not in _oauth_states:
+        return False
+    if time.time() - _oauth_states[state] > _OAUTH_STATE_TTL:
+        del _oauth_states[state]
+        return False
+    del _oauth_states[state]  # Uso unico
+    return True
+
 
 @app.get("/shopify/oauth/install")
 @limiter.limit("5/minute")
 async def shopify_oauth_install(request: Request, shop: str = "f0315f.myshopify.com"):
     """Inicia el flujo OAuth — abre esto en el browser para obtener un token nuevo."""
     from fastapi.responses import RedirectResponse
+    state = _generar_oauth_state()
     url = (
         f"https://{shop}/admin/oauth/authorize"
         f"?client_id={SHOPIFY_CLIENT_ID}"
         f"&scope={SHOPIFY_OAUTH_SCOPES}"
         f"&redirect_uri={SHOPIFY_REDIRECT_URI}"
-        f"&state=praie-oauth"
+        f"&state={state}"
     )
     return RedirectResponse(url)
 
@@ -224,6 +304,10 @@ async def shopify_oauth_install(request: Request, shop: str = "f0315f.myshopify.
 @limiter.limit("5/minute")
 async def shopify_oauth_callback(request: Request, code: str, shop: str, state: str = ""):
     """Recibe el código OAuth y lo intercambia por un access token."""
+    # SEC-017: Validar state para prevenir CSRF
+    if not _validar_oauth_state(state):
+        logger.warning(f"OAuth Shopify — state invalido o expirado: {state[:16]}...")
+        raise HTTPException(status_code=400, detail="State OAuth invalido o expirado")
     import httpx
     async with httpx.AsyncClient(timeout=10.0) as client:
         r = await client.post(
@@ -671,12 +755,21 @@ async def list_knowledge(_: None = Depends(verificar_api_key)):
             "name": f.name, "path": str(f),
             "size": f.stat().st_size, "content": f.read_text(encoding="utf-8"),
         })
-    prompts = Path("config/prompts.yaml")
-    if prompts.exists():
-        files.append({
-            "name": prompts.name, "path": str(prompts),
-            "size": prompts.stat().st_size, "content": prompts.read_text(encoding="utf-8"),
-        })
+    # SEC-025: Solo exponer el system_prompt (no errores ni fallbacks) de prompts.yaml
+    prompts_path = Path("config/prompts.yaml")
+    if prompts_path.exists():
+        try:
+            import yaml as _yaml
+            data = _yaml.safe_load(prompts_path.read_text(encoding="utf-8")) or {}
+            system_prompt = data.get("system_prompt", "")
+            files.append({
+                "name": prompts_path.name,
+                "path": str(prompts_path),
+                "size": len(system_prompt),
+                "content": system_prompt,  # Solo el system_prompt, no los mensajes de error
+            })
+        except Exception:
+            pass
     return files
 
 

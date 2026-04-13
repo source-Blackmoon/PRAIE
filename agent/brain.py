@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import yaml
 import logging
@@ -176,16 +177,39 @@ PATRONES_INJECTION = [
     "developer mode",
     "bypass your filters",
     "ignore safety",
+    "forget everything",
+    "start fresh",
+    "new conversation",
+    "override instructions",
+    "disregard previous",
+    "do anything now",
+    "sin restricciones",
+    "sin limitaciones",
+    "habla sin filtros",
+    "responde sin censura",
 ]
+
+# Patrones regex para evasion con espaciado/unicode
+_INJECTION_REGEX = re.compile(
+    r"(i[\s\W]*g[\s\W]*n[\s\W]*o[\s\W]*r[\s\W]*[ae]|"
+    r"o[\s\W]*l[\s\W]*v[\s\W]*i[\s\W]*d[\s\W]*a|"
+    r"j[\s\W]*a[\s\W]*i[\s\W]*l[\s\W]*b[\s\W]*r[\s\W]*e[\s\W]*a[\s\W]*k)",
+    re.IGNORECASE,
+)
 
 
 def _detectar_injection(mensaje: str) -> bool:
     """Detecta patrones comunes de prompt injection en mensajes de usuario."""
     texto = mensaje.lower().strip()
+    # Verificar patrones exactos
     for patron in PATRONES_INJECTION:
         if patron.lower() in texto:
             logger.warning(f"Prompt injection detectado — patron: '{patron}'")
             return True
+    # Verificar evasion con espaciado/unicode (ej: "i g n o r a")
+    if _INJECTION_REGEX.search(texto):
+        logger.warning("Prompt injection detectado — evasion con espaciado")
+        return True
     return False
 
 
@@ -335,6 +359,25 @@ RESPUESTA_INJECTION = (
     "Soy Laura, asistente de PRAIE. ¿En qué puedo ayudarte con nuestros productos?"
 )
 
+# ── SEC-024: Filtro de PII para historial enviado a Claude ──
+_PII_PATTERNS = [
+    # Tarjetas de credito (Visa, MC, Amex, etc.)
+    (re.compile(r"\b(?:\d[ -]?){13,16}\b"), "[TARJETA]"),
+    # Cedulas colombianas (7-10 digitos)
+    (re.compile(r"\b[1-9]\d{6,9}\b"), "[CEDULA]"),
+    # Contrasenas explicitas
+    (re.compile(r"(?i)(contrase[nñ]a|password|clave)[:\s]+\S+"), "[CONTRASENA]"),
+    # CVV tarjetas (3-4 digitos solos)
+    (re.compile(r"\bcvv?[:\s]*\d{3,4}\b", re.IGNORECASE), "[CVV]"),
+]
+
+
+def _sanitizar_pii(texto: str) -> str:
+    """Reemplaza PII sensible en texto antes de enviarlo a Claude API."""
+    for patron, reemplazo in _PII_PATTERNS:
+        texto = patron.sub(reemplazo, texto)
+    return texto
+
 
 async def generar_respuesta(mensaje: str, historial: list[dict], telefono: str = "") -> str:
     if not mensaje or len(mensaje.strip()) < 2:
@@ -344,8 +387,9 @@ async def generar_respuesta(mensaje: str, historial: list[dict], telefono: str =
     if _detectar_injection(mensaje):
         return RESPUESTA_INJECTION
 
-    mensajes = [{"role": m["role"], "content": m["content"]} for m in historial]
-    mensajes.append({"role": "user", "content": mensaje})
+    # SEC-024: Sanitizar PII del historial antes de enviar a Claude API
+    mensajes = [{"role": m["role"], "content": _sanitizar_pii(m["content"])} for m in historial]
+    mensajes.append({"role": "user", "content": _sanitizar_pii(mensaje)})
 
     try:
         for _ in range(5):  # máximo 5 rondas de tool_use
