@@ -13,11 +13,11 @@ interface MetricCardProps {
 }
 
 const WARM_GRADIENTS: Record<string, { bg: string; icon: string; text: string }> = {
-  coral: { bg: 'linear-gradient(145deg, #c2614b, #d4735e)', icon: '#fef2f0', text: '#fef2f0' },
-  sand: { bg: 'linear-gradient(145deg, #d4a574, #c49230)', icon: '#fefaf4', text: '#fefaf4' },
-  sage: { bg: 'linear-gradient(145deg, #5a8a6e, #4a7a5e)', icon: '#f0f7f2', text: '#f0f7f2' },
-  stone: { bg: 'linear-gradient(145deg, #78716c, #57534e)', icon: '#f5f5f4', text: '#f5f5f4' },
-  terracotta: { bg: 'linear-gradient(145deg, #a34e3b, #c2614b)', icon: '#fef2f0', text: '#fef2f0' },
+  coral: { bg: 'linear-gradient(145deg, #D9502E, #F07040)', icon: '#FAF6F0', text: '#FAF6F0' },
+  sand: { bg: 'linear-gradient(145deg, #C9963A, #E8B84B)', icon: '#FFFCF8', text: '#FFFCF8' },
+  sage: { bg: 'linear-gradient(145deg, #2E6B62, #1B3E3A)', icon: '#F5E6D3', text: '#F5E6D3' },
+  stone: { bg: 'linear-gradient(145deg, #7A6E65, #5A504A)', icon: '#FAF6F0', text: '#FAF6F0' },
+  terracotta: { bg: 'linear-gradient(145deg, #A83C1E, #D9502E)', icon: '#FAF6F0', text: '#FAF6F0' },
 }
 
 function resolveScheme(color?: string): { bg: string; icon: string; text: string } {

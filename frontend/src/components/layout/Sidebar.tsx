@@ -42,8 +42,8 @@ export function Sidebar() {
           <div
             className="w-10 h-10 rounded-2xl flex items-center justify-center text-white font-black text-sm"
             style={{
-              background: 'linear-gradient(145deg, #c2614b, #d4a574)',
-              boxShadow: '0 4px 16px rgba(194, 97, 75, 0.3)',
+              background: 'linear-gradient(145deg, #D9502E, #F07040)',
+              boxShadow: '0 4px 16px rgba(217, 80, 46, 0.35)',
             }}
           >
             P
@@ -81,15 +81,15 @@ export function Sidebar() {
                     : 'font-medium hover:bg-white/[0.04]',
                 )}
                 style={active ? {
-                  color: '#faf6f1',
-                  background: 'rgba(194, 97, 75, 0.12)',
-                  borderLeft: '3px solid #c2614b',
+                  color: '#F5E6D3',
+                  background: 'rgba(217, 80, 46, 0.14)',
+                  borderLeft: '3px solid #D9502E',
                   paddingLeft: 13,
                 } : {
-                  color: '#a8a29e',
+                  color: 'rgba(245,230,211,0.5)',
                 }}
               >
-                <Icon size={17} className="flex-shrink-0" style={active ? { color: '#d4a574' } : {}} />
+                <Icon size={17} className="flex-shrink-0" style={active ? { color: '#F07040' } : {}} />
                 {label}
               </motion.div>
             </Link>
@@ -103,8 +103,8 @@ export function Sidebar() {
           <div
             className="w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold"
             style={{
-              background: 'linear-gradient(145deg, #c2614b, #d4a574)',
-              color: '#faf6f1',
+              background: 'linear-gradient(145deg, #D9502E, #F07040)',
+              color: '#FAF6F0',
             }}
           >
             L
