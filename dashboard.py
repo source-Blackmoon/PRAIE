@@ -50,6 +50,7 @@ st.markdown("""
 DB_PATH = "agentkit.db"
 KNOWLEDGE_DIR = Path("knowledge")
 API_URL = os.getenv("API_URL", "http://localhost:8000")
+_HEADERS = {"X-Api-Key": os.getenv("API_KEY", "")}
 REPORTS_DIR = Path("tools/reportes")
 SEÑALES_PROBLEMA = ["no tengo esa información", "déjame consultarlo",
                     "no entendí", "problemas técnicos", "no sé", "disculpa"]
@@ -521,6 +522,7 @@ elif pagina == "🛒 Carritos Abandonados":
                     r = httpx.post(
                         f"{API_URL}/api/shopify/webhooks/registrar",
                         json={"base_url": webhook_url},
+                        headers=_HEADERS,
                         timeout=20,
                     )
                     if r.status_code == 200:
@@ -539,7 +541,7 @@ elif pagina == "🛒 Carritos Abandonados":
     # Listar webhooks actuales
     with st.expander("Ver webhooks activos en Shopify"):
         try:
-            r = httpx.get(f"{API_URL}/api/shopify/webhooks", timeout=10)
+            r = httpx.get(f"{API_URL}/api/shopify/webhooks", headers=_HEADERS, timeout=10)
             if r.status_code == 200:
                 webhooks = r.json().get("webhooks", [])
                 if not webhooks:
@@ -550,7 +552,7 @@ elif pagina == "🛒 Carritos Abandonados":
                         col_a.code(wh.get("topic", ""))
                         col_b.caption(wh.get("address", ""))
                         if col_c.button("🗑️", key=f"del_wh_{wh['id']}", help="Eliminar"):
-                            d = httpx.delete(f"{API_URL}/api/shopify/webhooks/{wh['id']}", timeout=10)
+                            d = httpx.delete(f"{API_URL}/api/shopify/webhooks/{wh['id']}", headers=_HEADERS, timeout=10)
                             if d.status_code == 200:
                                 st.success("Eliminado")
                                 st.rerun()

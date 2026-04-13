@@ -1,11 +1,12 @@
 import type { Carrito, Conversion, ConversacionResumen, KnowledgeFile, Mensaje, Metricas } from '@/types'
 
 const BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+const API_KEY = process.env.NEXT_PUBLIC_API_KEY || ''
 
 async function req<T>(path: string, opts?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     ...opts,
-    headers: { 'Content-Type': 'application/json', ...opts?.headers },
+    headers: { 'Content-Type': 'application/json', 'X-Api-Key': API_KEY, ...opts?.headers },
   })
   if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`)
   return res.json() as Promise<T>
