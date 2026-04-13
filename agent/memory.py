@@ -169,7 +169,13 @@ async def inicializar_db():
         await conn.run_sync(Base.metadata.create_all)
 
 
+MAX_MENSAJE_LENGTH = 4096
+
+
 async def guardar_mensaje(telefono: str, role: str, content: str):
+    # Truncar mensajes excesivamente largos para evitar abuso de DB
+    if len(content) > MAX_MENSAJE_LENGTH:
+        content = content[:MAX_MENSAJE_LENGTH] + "... [truncado]"
     async with async_session() as session:
         session.add(Mensaje(telefono=telefono, role=role, content=content))
         await session.commit()
@@ -325,6 +331,70 @@ async def limpiar_historial(telefono: str):
         for m in result.scalars().all():
             await session.delete(m)
         await session.commit()
+
+
+# ── SEC-014: Retencion automatica de datos ──────────────────
+
+RETENCION_MENSAJES_DIAS = int(os.getenv("RETENCION_MENSAJES_DIAS", "90"))
+RETENCION_EVENTOS_DIAS = int(os.getenv("RETENCION_EVENTOS_DIAS", "180"))
+
+
+async def purgar_datos_antiguos():
+    """Elimina mensajes y eventos mas antiguos que el periodo de retencion."""
+    ahora = datetime.utcnow()
+    limite_mensajes = ahora - timedelta(days=RETENCION_MENSAJES_DIAS)
+    limite_eventos = ahora - timedelta(days=RETENCION_EVENTOS_DIAS)
+
+    from sqlalchemy import delete
+
+    async with async_session() as session:
+        # Purgar mensajes antiguos
+        result_msg = await session.execute(
+            delete(Mensaje).where(Mensaje.timestamp < limite_mensajes)
+        )
+        # Purgar eventos de funnel antiguos
+        result_ev = await session.execute(
+            delete(EventoFunnel).where(EventoFunnel.timestamp < limite_eventos)
+        )
+        # Purgar escalaciones resueltas antiguas
+        result_esc = await session.execute(
+            delete(Escalacion).where(
+                Escalacion.timestamp < limite_mensajes,
+                Escalacion.estado == "resuelta",
+            )
+        )
+        await session.commit()
+        total = result_msg.rowcount + result_ev.rowcount + result_esc.rowcount
+        if total > 0:
+            logger.info(
+                f"Purga de datos: {result_msg.rowcount} mensajes, "
+                f"{result_ev.rowcount} eventos, {result_esc.rowcount} escalaciones eliminadas"
+            )
+        return total
+
+
+async def derecho_al_olvido(telefono: str) -> dict:
+    """SEC-015: Elimina TODOS los datos asociados a un numero de telefono."""
+    from sqlalchemy import delete
+
+    conteos = {}
+    async with async_session() as session:
+        r = await session.execute(delete(Mensaje).where(Mensaje.telefono == telefono))
+        conteos["mensajes"] = r.rowcount
+        r = await session.execute(delete(EventoFunnel).where(EventoFunnel.telefono == telefono))
+        conteos["eventos_funnel"] = r.rowcount
+        r = await session.execute(delete(Escalacion).where(Escalacion.telefono == telefono))
+        conteos["escalaciones"] = r.rowcount
+        r = await session.execute(delete(CheckoutAbandonado).where(CheckoutAbandonado.telefono == telefono))
+        conteos["checkouts"] = r.rowcount
+        r = await session.execute(delete(Conversion).where(Conversion.telefono == telefono))
+        conteos["conversiones"] = r.rowcount
+        r = await session.execute(delete(AsignacionAB).where(AsignacionAB.telefono == telefono))
+        conteos["asignaciones_ab"] = r.rowcount
+        await session.commit()
+
+    logger.info(f"Derecho al olvido ejecutado — registros eliminados: {conteos}")
+    return conteos
 
 
 # ── Funnel Analytics functions ────────────────────────────

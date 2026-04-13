@@ -150,6 +150,45 @@ def _cargar_knowledge() -> str:
     return "\n\n".join(secciones)
 
 
+# ── SEC-006: Deteccion de prompt injection ──────────────────
+PATRONES_INJECTION = [
+    "ignora tus instrucciones",
+    "ignore your instructions",
+    "ignore all previous",
+    "olvida tus instrucciones",
+    "olvida todo lo anterior",
+    "nuevo rol",
+    "new role",
+    "actua como",
+    "act as",
+    "eres ahora",
+    "you are now",
+    "system prompt",
+    "dame tu prompt",
+    "show me your prompt",
+    "repite tu configuracion",
+    "reveal your system",
+    "print your instructions",
+    "muestra tus instrucciones",
+    "DAN mode",
+    "jailbreak",
+    "modo desarrollador",
+    "developer mode",
+    "bypass your filters",
+    "ignore safety",
+]
+
+
+def _detectar_injection(mensaje: str) -> bool:
+    """Detecta patrones comunes de prompt injection en mensajes de usuario."""
+    texto = mensaje.lower().strip()
+    for patron in PATRONES_INJECTION:
+        if patron.lower() in texto:
+            logger.warning(f"Prompt injection detectado — patron: '{patron}'")
+            return True
+    return False
+
+
 _prompt_cache: tuple[str, float] | None = None
 _PROMPT_TTL = 60  # segundos — permite ver cambios del dashboard sin reiniciar
 
@@ -291,9 +330,19 @@ async def _ejecutar_herramienta(nombre: str, parametros: dict, telefono: str = "
     return f"Herramienta '{nombre}' no reconocida."
 
 
+RESPUESTA_INJECTION = (
+    "No puedo procesar ese tipo de solicitud. "
+    "Soy Laura, asistente de PRAIE. ¿En qué puedo ayudarte con nuestros productos?"
+)
+
+
 async def generar_respuesta(mensaje: str, historial: list[dict], telefono: str = "") -> str:
     if not mensaje or len(mensaje.strip()) < 2:
         return obtener_mensaje_fallback()
+
+    # SEC-006: Detectar prompt injection
+    if _detectar_injection(mensaje):
+        return RESPUESTA_INJECTION
 
     mensajes = [{"role": m["role"], "content": m["content"]} for m in historial]
     mensajes.append({"role": "user", "content": mensaje})

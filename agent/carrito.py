@@ -27,6 +27,13 @@ from agent.providers import obtener_proveedor
 
 logger = logging.getLogger("agentkit.carrito")
 
+
+def _ofuscar_tel(tel: str) -> str:
+    if len(tel) <= 6:
+        return "***"
+    return f"{tel[:5]}***{tel[-4:]}"
+
+
 MINUTOS_ESPERA = int(os.getenv("CARRITO_ESPERA_MINUTOS", "60"))
 SHOPIFY_SECRET = os.getenv("SHOPIFY_WEBHOOK_SECRET", "")
 
@@ -155,7 +162,7 @@ async def recibir_checkout(request: Request):
         datos["telefono"], TipoEventoFunnel.CARRITO_CREADO,
         MetadataEvento(checkout_id=datos["checkout_id"], total=datos.get("total", "")),
     )
-    logger.info(f"Checkout guardado: {datos['checkout_id']} — {datos['telefono']}")
+    logger.info(f"Checkout guardado: {datos['checkout_id']} — {_ofuscar_tel(datos['telefono'])}")
     return {"status": "ok", "checkout_id": datos["checkout_id"]}
 
 
@@ -225,7 +232,7 @@ async def recibir_orden_completada(request: Request):
             )
             # Marcar conversion en A/B test si aplica
             await marcar_conversion_ab(telefono)
-            logger.info(f"Conversión registrada — orden {order_id} | teléfono {telefono} | fuente: {fuente}")
+            logger.info(f"Conversión registrada — orden {order_id} | teléfono {_ofuscar_tel(telefono)} | fuente: {fuente}")
 
     return {"status": "ok"}
 
@@ -260,7 +267,7 @@ async def scheduler_carritos():
                         url_carrito=checkout.url_carrito,
                     )
                     await registrar_asignacion_ab(checkout.telefono, test_ab.id, variante)
-                    logger.info(f"A/B test #{test_ab.id}: variante {variante} para {checkout.telefono}")
+                    logger.info(f"A/B test #{test_ab.id}: variante {variante} para {_ofuscar_tel(checkout.telefono)}")
                 else:
                     mensaje = await construir_mensaje(
                         checkout.nombre, checkout.productos,
@@ -271,9 +278,9 @@ async def scheduler_carritos():
 
                 if enviado:
                     await marcar_mensaje_enviado(checkout.checkout_id)
-                    logger.info(f"Mensaje carrito enviado a {checkout.telefono}")
+                    logger.info(f"Mensaje carrito enviado a {_ofuscar_tel(checkout.telefono)}")
                 else:
-                    logger.error(f"Fallo al enviar a {checkout.telefono}")
+                    logger.error(f"Fallo al enviar a {_ofuscar_tel(checkout.telefono)}")
 
         except Exception as e:
             logger.error(f"Error en scheduler de carritos: {e}")

@@ -23,6 +23,7 @@ from agent.memory import (
     registrar_evento_funnel, TipoEventoFunnel, MetadataEvento,
     obtener_funnel, crear_escalacion, obtener_escalaciones, resolver_escalacion,
     obtener_tests_ab, crear_test_ab, pausar_test_ab, obtener_resultados_ab,
+    purgar_datos_antiguos, derecho_al_olvido,
 )
 from agent.providers import obtener_proveedor
 from agent.carrito import (
@@ -43,6 +44,13 @@ AUTO_RESPONDER = os.getenv("AUTO_RESPONDER", "true").lower() == "true"
 API_KEY = os.getenv("API_KEY", "")
 
 
+def _ofuscar_telefono(telefono: str) -> str:
+    """Ofusca numero de telefono para logs: +57300***4567"""
+    if len(telefono) <= 6:
+        return "***"
+    return f"{telefono[:5]}***{telefono[-4:]}"
+
+
 def verificar_api_key(x_api_key: str = Header(default="")):
     """Protege los endpoints de administración con una API key."""
     if not API_KEY:
@@ -59,10 +67,23 @@ logger = logging.getLogger("agentkit")
 proveedor = obtener_proveedor()
 
 
+async def _scheduler_purga():
+    """Ejecuta purga de datos antiguos cada 24 horas."""
+    while True:
+        try:
+            total = await purgar_datos_antiguos()
+            if total:
+                logger.info(f"Purga automatica completada: {total} registros eliminados")
+        except Exception as e:
+            logger.error(f"Error en purga automatica: {e}")
+        await asyncio.sleep(24 * 60 * 60)  # Cada 24 horas
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await inicializar_db()
     asyncio.create_task(scheduler_carritos())
+    asyncio.create_task(_scheduler_purga())
     logger.info(f"AgentKit listo — proveedor: {proveedor.__class__.__name__}")
     logger.info(f"Auto-respuesta WhatsApp: {'ACTIVA' if AUTO_RESPONDER else 'DESACTIVADA'}")
     logger.info("Scheduler de carritos abandonados activo")
@@ -70,18 +91,12 @@ async def lifespan(app: FastAPI):
     if ENVIRONMENT == "production":
         db_url = os.getenv("DATABASE_URL", "")
         if "sqlite" in db_url or not db_url:
-            logger.warning(
-                "ADVERTENCIA: Usando SQLite en producción. "
-                "Los datos se perderán al redesplegar. "
+            raise RuntimeError(
+                "BLOQUEADO: SQLite no es soportado en produccion. "
                 "Configura DATABASE_URL con PostgreSQL en Railway."
             )
-        if not API_KEY:
-            logger.warning(
-                "ADVERTENCIA: API_KEY no configurada. "
-                "Los endpoints de administración están desprotegidos."
-            )
         if not os.getenv("ANTHROPIC_API_KEY"):
-            logger.error("ANTHROPIC_API_KEY no configurada — el agente no puede responder.")
+            raise RuntimeError("ANTHROPIC_API_KEY no configurada — el agente no puede arrancar.")
     yield
 
 
@@ -98,11 +113,28 @@ CORS_ORIGINS = [
     "https://praie-front-production.up.railway.app",
 ]
 
+# ── SEC-013: Audit logging middleware ─────────────────────
+audit_logger = logging.getLogger("agentkit.audit")
+
+
+@app.middleware("http")
+async def audit_middleware(request: Request, call_next):
+    """Registra accesos a endpoints admin en un logger separado."""
+    response = await call_next(request)
+    path = request.url.path
+    if path.startswith("/api/") or path.startswith("/shopify/"):
+        client_ip = request.client.host if request.client else "unknown"
+        audit_logger.info(
+            f"{request.method} {path} — {response.status_code} — IP: {client_ip}"
+        )
+    return response
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["x-api-key", "content-type", "authorization"],
 )
 
 
@@ -134,12 +166,13 @@ async def _procesar_mensaje(telefono: str, texto: str, historial: list):
         respuesta = await generar_respuesta(texto, historial, telefono)
         await guardar_mensaje(telefono, "assistant", respuesta)
         ok = await proveedor.enviar_mensaje(telefono, respuesta)
+        tel_log = _ofuscar_telefono(telefono)
         if ok:
-            logger.info(f"Respuesta enviada a {telefono}: {respuesta[:80]}...")
+            logger.info(f"Respuesta enviada a {tel_log}")
         else:
-            logger.error(f"Fallo al enviar respuesta a {telefono}")
+            logger.error(f"Fallo al enviar respuesta a {tel_log}")
     except Exception as e:
-        logger.error(f"Error procesando mensaje de {telefono}: {e}")
+        logger.error(f"Error procesando mensaje de {_ofuscar_telefono(telefono)}: {e}")
 
 
 @app.post("/webhook")
@@ -153,7 +186,7 @@ async def webhook_handler(request: Request):
         for msg in mensajes:
             if msg.es_propio or not msg.texto:
                 continue
-            logger.info(f"Mensaje de {msg.telefono}: {msg.texto}")
+            logger.info(f"Mensaje de {_ofuscar_telefono(msg.telefono)}")
             historial = await obtener_historial(msg.telefono)
             # Retornar 200 a Twilio/Whapi inmediatamente y procesar en background
             # Evita timeout del proveedor cuando el tool_use toma >5s
@@ -331,7 +364,7 @@ async def enviar_carrito_manual(checkout_id: str, _: None = Depends(verificar_ap
 
     if enviado:
         await marcar_mensaje_enviado(checkout_id)
-        logger.info(f"Mensaje manual enviado a {checkout.telefono}")
+        logger.info(f"Mensaje manual enviado a {_ofuscar_telefono(checkout.telefono)}")
         return {"status": "ok", "mensaje": mensaje}
     else:
         raise HTTPException(status_code=500, detail="Error al enviar el mensaje por WhatsApp")
@@ -573,6 +606,18 @@ async def put_resolver_escalacion(escalacion_id: int, _: None = Depends(verifica
     return {"status": "ok"}
 
 
+# ── Derecho al olvido (Ley 1581/2012) ────────────────────
+
+@app.delete("/api/datos/{telefono}")
+async def delete_datos_telefono(telefono: str, _: None = Depends(verificar_api_key)):
+    """SEC-015: Elimina TODOS los datos asociados a un numero de telefono."""
+    conteos = await derecho_al_olvido(telefono)
+    total = sum(conteos.values())
+    if total == 0:
+        raise HTTPException(status_code=404, detail="No se encontraron datos para este telefono")
+    return {"status": "ok", "registros_eliminados": conteos, "total": total}
+
+
 # ── A/B Testing ──────────────────────────────────────────
 
 @app.get("/api/ab-tests")
@@ -635,11 +680,22 @@ async def list_knowledge(_: None = Depends(verificar_api_key)):
     return files
 
 
+ALLOWED_KNOWLEDGE_EXTENSIONS = {".txt", ".yaml", ".yml"}
+MAX_KNOWLEDGE_SIZE = 50_000  # 50KB max por archivo
+
+
 @app.put("/api/knowledge/{filename}")
 async def update_knowledge(filename: str, request: Request, _: None = Depends(verificar_api_key)):
     """Actualiza el contenido de un archivo del knowledge base."""
+    # SEC-020: Validar path traversal y extensiones
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Nombre de archivo invalido")
+    if Path(filename).suffix.lower() not in ALLOWED_KNOWLEDGE_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"Extension no permitida. Usa: {ALLOWED_KNOWLEDGE_EXTENSIONS}")
     body = await request.json()
     content = body.get("content", "")
+    if len(content) > MAX_KNOWLEDGE_SIZE:
+        raise HTTPException(status_code=400, detail=f"Contenido excede el limite de {MAX_KNOWLEDGE_SIZE} caracteres")
     for candidate in [Path("knowledge") / filename, Path("config") / filename]:
         if candidate.exists():
             candidate.write_text(content, encoding="utf-8")
