@@ -387,7 +387,8 @@ async def sync_shopify(_: None = Depends(verificar_api_key)):
 @app.get("/api/shopify/status")
 async def shopify_status(_: None = Depends(verificar_api_key)):
     """Verifica que las credenciales de Shopify sean válidas."""
-    return await verificar_credenciales()
+    r = await verificar_credenciales()
+    return {"valid": r.get("ok", False), "shop": r.get("tienda", ""), **r}
 
 
 @app.get("/api/shopify/test-productos")
